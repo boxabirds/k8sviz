@@ -7,6 +7,11 @@
     <title>Interactive Kubernetes Cluster Explorer</title>
     <style>
         :root {
+            /* Layout Variables */
+            --left-panel-width: 320px;
+            --right-panel-width: 350px;
+            --bottom-panel-height: 100px;
+            
             /* Node Colors */
             --master-node: #2E7D32;
             --master-core: #66BB6A;
@@ -64,9 +69,9 @@
         #cluster-container {
             position: absolute;
             top: 50px;
-            left: 320px;
-            right: 350px;
-            bottom: 100px;
+            left: var(--left-panel-width);
+            right: var(--right-panel-width);
+            bottom: var(--bottom-panel-height);
             transition: all 0.3s ease;
         }
 
@@ -142,7 +147,7 @@
             position: fixed;
             top: 50px;
             left: 0;
-            width: 320px;
+            width: var(--left-panel-width);
             height: calc(100vh - 50px);
             background: rgba(38, 50, 56, 0.85);
             backdrop-filter: blur(10px);
@@ -188,7 +193,7 @@
             position: fixed;
             top: 50px;
             right: 0;
-            width: 350px;
+            width: var(--right-panel-width);
             height: calc(100vh - 50px);
             background: rgba(38, 50, 56, 0.85);
             backdrop-filter: blur(10px);
@@ -234,9 +239,9 @@
         #bottom-panel {
             position: fixed;
             bottom: 0;
-            left: 320px;
-            right: 0;
-            height: 100px;
+            left: var(--left-panel-width);
+            right: var(--right-panel-width);
+            height: var(--bottom-panel-height);
             background: rgba(38, 50, 56, 0.85);
             backdrop-filter: blur(10px);
             z-index: 10;
@@ -2585,15 +2590,15 @@
                     
                     if (currentHandle === leftHandle) {
                         const newWidth = Math.max(200, Math.min(500, startWidth + e.clientX - startX));
-                        leftPanel.style.width = newWidth + 'px';
+                        document.documentElement.style.setProperty('--left-panel-width', newWidth + 'px');
                         updateLayout();
                     } else if (currentHandle === rightHandle) {
                         const newWidth = Math.max(250, Math.min(600, startWidth - e.clientX + startX));
-                        rightPanel.style.width = newWidth + 'px';
+                        document.documentElement.style.setProperty('--right-panel-width', newWidth + 'px');
                         updateLayout();
                     } else if (currentHandle === bottomHandle) {
                         const newHeight = Math.max(60, Math.min(300, startHeight - e.clientY + startY));
-                        bottomPanel.style.height = newHeight + 'px';
+                        document.documentElement.style.setProperty('--bottom-panel-height', newHeight + 'px');
                         updateLayout();
                     } else if (currentHandle === splitHandle) {
                         const containerHeight = rightPanel.offsetHeight;
@@ -2614,18 +2619,10 @@
                 }
                 
                 function updateLayout() {
-                    const leftWidth = leftPanel.offsetWidth;
-                    const rightWidth = rightPanel.offsetWidth;
-                    const bottomHeight = bottomPanel.offsetHeight;
-                    
-                    // Update main content area
-                    const clusterContainer = document.getElementById('cluster-container');
-                    clusterContainer.style.left = leftWidth + 'px';
-                    clusterContainer.style.right = rightWidth + 'px';
-                    clusterContainer.style.bottom = bottomHeight + 'px';
-                    
-                    // Update bottom panel to align with left panel
-                    bottomPanel.style.left = leftWidth + 'px';
+                    // Get current dimensions from CSS variables
+                    const leftWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--left-panel-width'));
+                    const rightWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--right-panel-width'));
+                    const bottomHeight = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--bottom-panel-height'));
                     
                     // Update camera aspect ratio
                     if (camera && renderer) {
@@ -2936,6 +2933,8 @@
                             // Initialize label system
                             setTimeout(() => {
                                 updatePanelLabels(); // Setup initial labels and tooltips
+                                // Update layout to ensure proper panel alignment
+                                if (window.updateLayout) window.updateLayout();
                             }, 100);
                             animate(); setInterval(reconciliationLoop, 1000);
                         });
