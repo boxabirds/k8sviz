@@ -7,27 +7,58 @@
     <title>Interactive Kubernetes Cluster Explorer</title>
     <style>
         :root {
+            /* Node Colors */
             --master-node: #2E7D32;
             --master-core: #66BB6A;
             --worker-node: #455A64;
             --pipe: #00BCD4;
             --particle: #FFFFFF;
+            
+            /* UI Colors */
             --ui-bg: #263238;
+            --ui-bg-light: #37474F;
             --ui-text: #ECEFF1;
+            --ui-text-secondary: #B0BEC5;
             --ui-accent: #00BCD4;
+            --ui-accent-hover: #00ACC1;
             --ui-border: #37474F;
+            
+            /* Status Colors */
             --pod-running: #4CAF50;
             --pod-pending: #FFC107;
             --pod-failed: #F44336;
+            
+            /* Typography */
+            --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            --font-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            
+            /* Spacing */
+            --spacing-xs: 4px;
+            --spacing-sm: 8px;
+            --spacing-md: 16px;
+            --spacing-lg: 24px;
+            --spacing-xl: 32px;
+            
+            /* Border Radius */
+            --radius-sm: 4px;
+            --radius-md: 6px;
+            --radius-lg: 8px;
+            
+            /* Shadows */
+            --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.15);
+            --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.2);
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: var(--font-family);
             margin: 0;
             background-color: #1a1a1a;
             color: var(--ui-text);
             overflow: hidden;
             display: flex;
+            font-size: 14px;
+            line-height: 1.5;
         }
 
         #cluster-container {
@@ -52,35 +83,41 @@
 
         .label {
             color: var(--ui-text);
-            background: rgba(0, 0, 0, 0.7);
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 14px;
+            background: rgba(0, 0, 0, 0.75);
+            padding: var(--spacing-xs) var(--spacing-sm);
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
             pointer-events: none;
+            backdrop-filter: blur(4px);
         }
 
         .pod-label {
-            font-size: 12px;
-            padding: 2px 4px;
-            background: rgba(0, 0, 0, 0.5);
+            font-size: 11px;
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.6);
+            font-weight: 600;
+            letter-spacing: 0.5px;
         }
 
         .deployment-label {
-            font-size: 14px;
-            font-weight: bold;
-            padding: 4px 8px;
-            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 600;
+            padding: var(--spacing-xs) var(--spacing-sm);
+            border-radius: var(--radius-sm);
             border: 2px solid;
-            background: rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            letter-spacing: 0.3px;
         }
 
         .panel {
             background-color: var(--ui-bg);
-            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+            box-shadow: var(--shadow-lg);
             z-index: 10;
             display: flex;
             flex-direction: column;
-            transition: transform 0.3s ease-in-out;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         #top-bar {
@@ -90,13 +127,14 @@
             width: 100%;
             height: 50px;
             background-color: var(--ui-bg);
-            border-bottom: 2px solid var(--ui-border);
+            border-bottom: 1px solid var(--ui-border);
             display: flex;
             align-items: center;
-            padding: 0 20px;
+            padding: 0 var(--spacing-lg);
             box-sizing: border-box;
-            gap: 15px;
+            gap: var(--spacing-md);
             z-index: 20;
+            box-shadow: var(--shadow-sm);
         }
 
         #left-sidebar {
@@ -105,9 +143,11 @@
             left: 0;
             width: 320px;
             height: calc(100vh - 50px - 80px);
-            padding: 20px;
-            border-right: 2px solid var(--ui-border);
+            padding: var(--spacing-lg);
+            border-right: 1px solid var(--ui-border);
             overflow-y: auto;
+            background: rgba(38, 50, 56, 0.5);
+            backdrop-filter: blur(10px);
         }
 
         #inspector-panel {
@@ -116,12 +156,13 @@
             right: 0;
             width: 350px;
             height: calc(100vh - 50px);
-            padding: 20px;
-            border-left: 2px solid var(--ui-border);
+            padding: var(--spacing-lg);
+            border-left: 1px solid var(--ui-border);
             transform: translateX(105%);
             z-index: 12;
             background: rgba(38, 50, 56, 0.95);
-            backdrop-filter: blur(5px);
+            backdrop-filter: blur(10px);
+            box-shadow: -4px 0 8px rgba(0, 0, 0, 0.1);
         }
 
         #inspector-panel.visible {
@@ -135,12 +176,25 @@
             width: calc(100% - 322px);
             height: 80px;
             background-color: rgba(38, 50, 56, 0.9);
-            border-top: 2px solid var(--ui-border);
-            padding: 10px;
+            border-top: 1px solid var(--ui-border);
+            padding: var(--spacing-sm);
             box-sizing: border-box;
             overflow-y: auto;
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 12px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            line-height: 1.4;
+            backdrop-filter: blur(10px);
+        }
+        
+        #event-log p {
+            margin: 2px 0;
+            padding: 2px 0;
+            opacity: 0.8;
+        }
+        
+        #event-log p:first-child {
+            opacity: 1;
+            font-weight: 600;
         }
 
         #hierarchy-panel {
@@ -149,13 +203,14 @@
             right: 0;
             width: 300px;
             height: calc(100vh - 50px);
-            background: rgba(38, 50, 56, 0.85);
-            backdrop-filter: blur(5px);
-            border-left: 2px solid var(--ui-border);
+            background: rgba(38, 50, 56, 0.9);
+            backdrop-filter: blur(10px);
+            border-left: 1px solid var(--ui-border);
             z-index: 15;
             display: flex;
             flex-direction: column;
-            transition: transform 0.3s ease-out;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: -4px 0 8px rgba(0, 0, 0, 0.1);
         }
 
         #hierarchy-panel.collapsed {
@@ -180,24 +235,33 @@
         }
 
         #hierarchy-header {
-            padding: 10px;
+            padding: var(--spacing-md);
             border-bottom: 1px solid var(--ui-border);
+            background: rgba(0, 0, 0, 0.1);
         }
 
         #hierarchy-search {
-            width: calc(100% - 20px);
-            padding: 8px;
-            background: var(--ui-border);
+            width: 100%;
+            padding: var(--spacing-sm) var(--spacing-md);
+            background: var(--ui-bg-light);
             color: var(--ui-text);
-            border: 1px solid var(--ui-accent);
-            border-radius: 4px;
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            transition: all 0.2s ease;
+        }
+        
+        #hierarchy-search:focus {
+            outline: none;
+            border-color: var(--ui-accent);
+            background: rgba(0, 188, 212, 0.05);
         }
 
         #hierarchy-tree {
             flex-grow: 1;
             overflow-y: auto;
-            padding: 10px;
-            font-size: 14px;
+            padding: var(--spacing-md);
+            font-size: 13px;
         }
 
         #hierarchy-tree ul,
@@ -214,12 +278,15 @@
         .tree-item {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: var(--spacing-sm);
             cursor: pointer;
+            padding: var(--spacing-xs);
+            border-radius: var(--radius-sm);
+            transition: background-color 0.15s ease;
         }
 
         .tree-item:hover {
-            background: rgba(0, 188, 212, 0.1);
+            background: rgba(0, 188, 212, 0.08);
         }
 
         .tree-swivel,
@@ -242,18 +309,21 @@
         }
 
         .tree-item .role {
-            font-size: 12px;
-            color: #90A4AE;
+            font-size: 11px;
+            color: var(--ui-text-secondary);
             margin-left: auto;
-            padding-right: 5px;
+            padding-right: var(--spacing-sm);
+            font-weight: 500;
+            opacity: 0.8;
         }
 
         .status-dot {
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             display: inline-block;
-            margin-right: 5px;
+            margin-right: var(--spacing-sm);
+            box-shadow: 0 0 4px currentColor;
         }
 
         #modal-overlay {
@@ -271,36 +341,52 @@
 
         #modal-content {
             background: var(--ui-bg);
-            padding: 20px;
-            border-radius: 8px;
-            border: 2px solid var(--ui-accent);
+            padding: var(--spacing-xl);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--ui-border);
+            box-shadow: var(--shadow-lg);
+            min-width: 400px;
         }
 
         #modal-content input {
-            width: 95%;
-            margin-bottom: 15px;
-            padding: 8px;
+            width: 100%;
+            margin-bottom: var(--spacing-md);
+            padding: var(--spacing-sm) var(--spacing-md);
+            background: var(--ui-bg-light);
+            color: var(--ui-text);
+            border: 1px solid var(--ui-border);
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+            transition: border-color 0.2s ease;
+        }
+        
+        #modal-content input:focus {
+            outline: none;
+            border-color: var(--ui-accent);
         }
 
         .gauge-container {
             width: 100%;
-            height: 18px;
-            background-color: #546E7A;
-            border-radius: 9px;
-            margin-top: 5px;
+            height: 20px;
+            background-color: rgba(84, 110, 122, 0.3);
+            border-radius: 10px;
+            margin-top: var(--spacing-sm);
             overflow: hidden;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
         }
 
         .gauge-bar {
             height: 100%;
-            border-radius: 9px;
-            transition: width 0.5s ease-out;
+            border-radius: 10px;
+            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
             text-align: right;
-            padding-right: 5px;
+            padding-right: var(--spacing-sm);
             box-sizing: border-box;
             color: white;
             font-size: 11px;
-            line-height: 18px;
+            line-height: 20px;
+            font-weight: 600;
+            background-image: linear-gradient(180deg, rgba(255,255,255,0.1) 0%, transparent 100%);
         }
 
         .cpu-bar {
@@ -312,23 +398,42 @@
         }
 
         .tool-btn {
-            font-size: 18px;
-            padding: 5px 10px;
-            background: var(--ui-border);
+            font-size: 16px;
+            padding: var(--spacing-sm) var(--spacing-md);
+            background: var(--ui-bg-light);
             color: var(--ui-text);
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+        
+        .tool-btn:hover {
+            background: rgba(0, 188, 212, 0.1);
+            border-color: var(--ui-accent);
         }
 
         .tool-btn.active {
             background: var(--ui-accent);
-            color: var(--ui-bg);
+            color: white;
+            box-shadow: var(--shadow-sm);
         }
 
         h2,
         h3 {
             color: var(--ui-accent);
             margin-top: 0;
-            border-bottom: 1px solid var(--ui-border);
-            padding-bottom: 10px
+            margin-bottom: var(--spacing-md);
+            font-weight: 600;
+        }
+        
+        h2 {
+            font-size: 18px;
+        }
+        
+        h3 {
+            font-size: 15px;
         }
 
         h3 .subtitle {
@@ -416,6 +521,36 @@
             font-family: 'Courier New', Courier, monospace;
             font-size: 13px;
         }
+        
+        .control-group {
+            margin-bottom: var(--spacing-xl);
+        }
+        
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+        
+        .control-group h3 {
+            margin-bottom: var(--spacing-md);
+        }
+        
+        #top-bar > button {
+            font-size: 12px;
+            padding: 6px 12px;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            margin: var(--spacing-sm) 0;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: var(--spacing-xs);
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--ui-text-secondary);
+        }
     </style>
 </head>
 
@@ -487,11 +622,10 @@
             <h3>Create Service<span class="subtitle">(Network Layer)</span></h3>
             <div class="info-card"> 
                 <label for="service-name-input">Service Name:</label>
-                <input type="text" id="service-name-input" placeholder="my-service"
-                    style="width: 100%; padding: 8px; background: var(--ui-border); color: var(--ui-text); border: 1px solid var(--ui-accent); border-radius: 4px; margin-bottom: 10px;">
-                <label for="service-label-selector">Label Selector:</label> <select
-                    id="service-label-selector" multiple
-                    style="width: 100%; padding: 8px; background: var(--ui-border); color: var(--ui-text); border: 1px solid var(--ui-accent); border-radius: 4px; margin-bottom: 10px; min-height: 80px;">
+                <input type="text" id="service-name-input" placeholder="my-service">
+                <label for="service-label-selector">Label Selector:</label>
+                <select id="service-label-selector" multiple
+                    style="min-height: 80px;">
                 </select>
                 <button id="create-service-btn">Create Service</button>
                 <p class="explanation">Services use label selectors to find pods. Select one or more labels from the dropdown.<br>Hold Ctrl/Cmd to select multiple labels.</p>
@@ -615,21 +749,23 @@
             }
             function createUserIcon() { const loader = new THREE.TextureLoader(); loader.load('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0wIDNjMS42NiAwIDMgMS4zNCAzIDNzLTEuMzQgMy0zIDMtMy0xLjM0LTMtMyAxLjM0LTMgMy0zem0wIDE0LjJjLTIuNSAwLTQuNzEtMS4yOC02LTIuMjIuMDMtMS45OSA0LTMuMDggNi0zLjA4czUuOTcgMS4wOSA2IDMuMDhjLTEuMjkgLjk0LTMuNSAyLjIyLTYgMi4yMnoiLz48L3N2Zz4=', texture => { const mat = new THREE.SpriteMaterial({ map: texture }); userIcon = new THREE.Sprite(mat); userIcon.position.set(20, 10, 0); userIcon.scale.set(2, 2, 2); scene.add(userIcon); }) }
             function createPlaneSeparators() {
-                const planeSize = 100;
+                const planeSize = 50;
                 Object.entries(CONFIG.PLANES).forEach(([key, plane]) => {
                     // Create semi-transparent plane
                     const planeGeom = new THREE.PlaneGeometry(planeSize, planeSize);
                     const planeMat = new THREE.MeshBasicMaterial({
                         color: plane.color,
                         transparent: true,
-                        opacity: 0.05,
-                        side: THREE.DoubleSide
+                        opacity: 0.02,
+                        side: THREE.DoubleSide,
+                        depthWrite: false
                     });
                     const planeMesh = new THREE.Mesh(planeGeom, planeMat);
                     planeMesh.rotation.x = -Math.PI / 2;
                     planeMesh.position.y = plane.y;
                     planeMesh.userData = { type: 'plane', name: key };
                     planeMesh.frustumCulled = false;
+                    planeMesh.renderOrder = -50;
                     scene.add(planeMesh);
                     threeObjects.set(`plane-${key}`, planeMesh);
 
@@ -678,7 +814,7 @@
                         node.componentOrbs.push(orb);
                     });
                     mesh = group; mesh.frustumCulled = false; mesh.add(createHtmlLabel("Control Plane", new THREE.Vector3(0, 1.5, 0)));
-                } else { const width = node.cpu.capacity * CONFIG.NODE_WIDTH_CPU_SCALE; const height = node.memory.capacity * CONFIG.NODE_HEIGHT_MEM_SCALE; const depth = CONFIG.NODE_DEPTH_STORAGE; const mat = new THREE.MeshLambertMaterial({ color: CONFIG.COLORS.WORKER_NODE, transparent: true, opacity: .3, side: THREE.DoubleSide }); mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), mat); mesh.position.y = height / 2; mesh.frustumCulled = false; mesh.renderOrder = -1; mesh.add(createHtmlLabel(node.name, new THREE.Vector3(0, height / 2 + .5, 0))); } mesh.userData = { id: node.id, type: 'node' }; scene.add(mesh); threeObjects.set(node.id, mesh); repositionNodes(); if (node.type === 'worker') createPipe(node);
+                } else { const width = node.cpu.capacity * CONFIG.NODE_WIDTH_CPU_SCALE; const height = node.memory.capacity * CONFIG.NODE_HEIGHT_MEM_SCALE; const depth = CONFIG.NODE_DEPTH_STORAGE; const mat = new THREE.MeshLambertMaterial({ color: CONFIG.COLORS.WORKER_NODE, transparent: true, opacity: .2, side: THREE.DoubleSide, depthWrite: false }); mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), mat); mesh.position.y = height / 2; mesh.frustumCulled = false; mesh.renderOrder = -100; mesh.add(createHtmlLabel(node.name, new THREE.Vector3(0, height / 2 + .5, 0))); } mesh.userData = { id: node.id, type: 'node' }; scene.add(mesh); threeObjects.set(node.id, mesh); repositionNodes(); if (node.type === 'worker') createPipe(node);
             }
             function createPodVisual(pod, node) { const nodeMesh = threeObjects.get(node.id); if (!nodeMesh) return; const podSize = .5 + (pod.cpuRequest + pod.memRequest) * CONFIG.POD_SCALE_FACTOR; const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(CONFIG.APP_COLORS[pod.image] || CONFIG.APP_COLORS.default) }); const podMesh = new THREE.Mesh(new THREE.CylinderGeometry(podSize / 2, podSize / 2, podSize, 6), mat); const nodeBoxSize = new THREE.Vector3(); new THREE.Box3().setFromObject(nodeMesh).getSize(nodeBoxSize); const podSpacing = podSize * 1.2; const podsPerRow = Math.floor(nodeBoxSize.x / podSpacing); const podIndexOnNode = Array.from(node.pods).indexOf(pod.id); const col = podIndexOnNode % podsPerRow; const row = Math.floor(podIndexOnNode / podsPerRow); podMesh.position.set(-nodeBoxSize.x / 2 + (col * podSpacing) + podSpacing / 2, -nodeBoxSize.y / 2 + podSize / 2, -nodeBoxSize.z / 2 + (row * podSpacing) + podSpacing / 2); podMesh.userData = { id: pod.id, type: 'pod' }; podMesh.scale.set(.01, .01, .01); const label = createHtmlLabel(pod.image, new THREE.Vector3(0, podSize / 2 + .2, 0)); label.element.classList.add('pod-label'); podMesh.add(label); nodeMesh.add(podMesh); threeObjects.set(pod.id, podMesh); new TWEEN.Tween(podMesh.scale).to({ x: 1, y: 1, z: 1 }, 500).easing(TWEEN.Easing.Elastic.Out).start(); recalculateServicePositions(); }
             function createServiceVisual(srv) {
@@ -695,7 +831,7 @@
             }
             function createPipe(workerNode) { const masterNode = clusterState.nodes.find(n => n.type === 'master'); const masterMesh = threeObjects.get(masterNode.id); const workerMesh = threeObjects.get(workerNode.id); if (!masterMesh || !workerMesh) return; const startPoint = workerMesh.position.clone().setY(0); const endPoint = workerMesh.position.clone().setY(workerMesh.geometry.parameters.height / -2); const path = new THREE.LineCurve3(startPoint, endPoint); const pipeGeom = new THREE.TubeGeometry(path, 20, .1, 8, false); const pipeMat = new THREE.MeshBasicMaterial({ color: CONFIG.COLORS.PIPE }); const pipeMesh = new THREE.Mesh(pipeGeom, pipeMat); workerMesh.pipe = pipeMesh; scene.add(pipeMesh); for (let i = 0; i < 3; i++) { const particle = new THREE.Mesh(new THREE.SphereGeometry(.15, 8, 8), new THREE.MeshBasicMaterial({ color: CONFIG.COLORS.PARTICLE })); clusterState.traffic.push({ mesh: particle, path, progress: i * .33, nodeId: workerNode.id }); scene.add(particle); } }
             function repositionNodes() { const workers = clusterState.nodes.filter(n => n.type === 'worker'); const master = clusterState.nodes.find(n => n.type === 'master'); if (master) threeObjects.get(master.id).position.set(0, 0, 0); const boundingBox = new THREE.Box3(); workers.forEach((node, i) => { const mesh = threeObjects.get(node.id); if (mesh) { mesh.position.set((i % 2 === 0 ? -1 : 1) * 7, mesh.position.y, -8 + (Math.floor(i / 2) * -12)); boundingBox.expandByObject(mesh); if (mesh.pipe) { const startPoint = mesh.position.clone().setY(0); const endPoint = mesh.position.clone().setY(mesh.geometry.parameters.height / -2); const newPath = new THREE.LineCurve3(startPoint, endPoint); mesh.pipe.geometry.dispose(); mesh.pipe.geometry = new THREE.TubeGeometry(newPath, 20, .1, 8, false); clusterState.traffic.filter(t => t.nodeId === node.id).forEach(t => t.path = newPath); } } }); const masterMeshGroup = threeObjects.get(master.id); if (masterMeshGroup) { const foundationMesh = masterMeshGroup.children[0]; if (workers.length > 0) { const size = new THREE.Vector3(); boundingBox.getSize(size); const center = new THREE.Vector3(); boundingBox.getCenter(center); foundationMesh.scale.set(size.x + 10, 1, size.z + 10); foundationMesh.position.set(center.x, -.5, center.z); } else { foundationMesh.scale.set(1, 1, 1); foundationMesh.position.set(0, -.5, 0); } } recalculateServicePositions(); }
-            function updateDeploymentVisuals() { Object.values(clusterState.deployments).forEach(dep => { let depBoxVisual = threeObjects.get(`dep-${dep.id}`); const podMeshes = Array.from(dep.podIds).map(id => clusterState.pods[id] && threeObjects.get(id)).filter(Boolean); if (podMeshes.length === 0) { if (depBoxVisual) { scene.remove(depBoxVisual.label); scene.remove(depBoxVisual); threeObjects.delete(`dep-${dep.id}`); } return; } const boundingBox = new THREE.Box3(); podMeshes.forEach(podMesh => boundingBox.expandByObject(podMesh)); if (!depBoxVisual) { const colorHex = CONFIG.APP_COLORS[dep.image] || CONFIG.APP_COLORS.default; const boxMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(colorHex), transparent: true, opacity: .1, emissive: new THREE.Color(colorHex), emissiveIntensity: 0, side: THREE.DoubleSide }); depBoxVisual = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), boxMat); depBoxVisual.userData = { id: dep.id, type: 'deployment' }; depBoxVisual.frustumCulled = false; const label = createHtmlLabel(dep.name, new THREE.Vector3()); label.element.classList.add('deployment-label'); label.element.style.color = colorHex; label.element.style.borderColor = colorHex; depBoxVisual.label = label; scene.add(depBoxVisual); scene.add(label); threeObjects.set(`dep-${dep.id}`, depBoxVisual); } const size = new THREE.Vector3(); boundingBox.getSize(size); const center = new THREE.Vector3(); boundingBox.getCenter(center); if (size.x > 0) { depBoxVisual.scale.copy(size).addScalar(1.5); depBoxVisual.position.copy(center); depBoxVisual.label.position.set(center.x, boundingBox.max.y + 1, center.z); depBoxVisual.visible = dep.isVisible; depBoxVisual.label.visible = dep.isVisible; } }); }
+            function updateDeploymentVisuals() { Object.values(clusterState.deployments).forEach(dep => { let depBoxVisual = threeObjects.get(`dep-${dep.id}`); const podMeshes = Array.from(dep.podIds).map(id => clusterState.pods[id] && threeObjects.get(id)).filter(Boolean); if (podMeshes.length === 0) { if (depBoxVisual) { scene.remove(depBoxVisual.label); scene.remove(depBoxVisual); threeObjects.delete(`dep-${dep.id}`); } return; } const boundingBox = new THREE.Box3(); podMeshes.forEach(podMesh => boundingBox.expandByObject(podMesh)); if (!depBoxVisual) { const colorHex = CONFIG.APP_COLORS[dep.image] || CONFIG.APP_COLORS.default; const boxMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(colorHex), transparent: true, opacity: .2, emissive: new THREE.Color(colorHex), emissiveIntensity: 0, side: THREE.DoubleSide, depthWrite: true }); depBoxVisual = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), boxMat); depBoxVisual.userData = { id: dep.id, type: 'deployment' }; depBoxVisual.frustumCulled = false; depBoxVisual.renderOrder = 5; const label = createHtmlLabel(dep.name, new THREE.Vector3()); label.element.classList.add('deployment-label'); label.element.style.color = colorHex; label.element.style.borderColor = colorHex; depBoxVisual.label = label; scene.add(depBoxVisual); scene.add(label); threeObjects.set(`dep-${dep.id}`, depBoxVisual); } const size = new THREE.Vector3(); boundingBox.getSize(size); const center = new THREE.Vector3(); boundingBox.getCenter(center); if (size.x > 0) { depBoxVisual.scale.copy(size).addScalar(1.5); depBoxVisual.position.copy(center); depBoxVisual.label.position.set(center.x, boundingBox.max.y + 1, center.z); depBoxVisual.visible = dep.isVisible; depBoxVisual.label.visible = dep.isVisible; } }); }
             function updateServiceVisuals() {
                 Object.values(clusterState.services).forEach(srv => {
                     const portalMesh = threeObjects.get(`srv-${srv.id}`); if (!portalMesh) return;
@@ -723,11 +859,14 @@
                         const lineMat = new THREE.LineBasicMaterial({
                             color: portalMesh.material.color,
                             transparent: true,
-                            opacity: 0.3,
-                            linewidth: 2
+                            opacity: 0.4,
+                            linewidth: 2,
+                            depthTest: true,
+                            depthWrite: true
                         });
                         const line = new THREE.Line(lineGeom, lineMat);
                         line.visible = srv.isVisible;
+                        line.renderOrder = 10;
                         srv.networkLines.push(line);
                         scene.add(line);
                     });
