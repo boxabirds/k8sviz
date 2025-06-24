@@ -630,9 +630,10 @@
         <button id="add-worker-btn" data-label="Add Worker">Add Worker</button>
         <button id="remove-worker-btn" data-label="Remove Worker">Remove Worker</button>
         <button id="pause-btn">Pause</button>
-        <div style="margin-left:auto; display:flex; gap: 5px;">
-            <button id="select-tool" class="tool-btn" title="Select Tool (S)">👆</button>
-            <button id="navigate-tool" class="tool-btn active" title="Navigate Tool (V)">🖐️</button>
+        <div style="margin-left:auto; display:flex; gap: 10px; align-items: center;">
+            <span style="color: #B0BEC5; font-size: 12px;">Tool:</span>
+            <button id="select-tool" class="tool-btn" title="Select Tool (S) - Drag pods between nodes">👆 Select</button>
+            <button id="navigate-tool" class="tool-btn active" title="Navigate Tool (V) - Click to inspect, drag to rotate">🖐️ Navigate</button>
         </div>
     </div>
     <!-- Left Panel -->
@@ -874,6 +875,120 @@
                 renderer.domElement.addEventListener('pointerdown', onPointerDown, false);
                 renderer.domElement.addEventListener('pointermove', onPointerMove, false);
                 renderer.domElement.addEventListener('pointerup', onPointerUp, false);
+                
+                // Click handler for navigate tool
+                renderer.domElement.addEventListener('click', (event) => {
+                    console.log('=== CLICK DEBUG ===');
+                    console.log('Position:', event.clientX, event.clientY);
+                    console.log('Current tool:', currentTool);
+                    
+                    if (currentTool === 'navigate' || currentTool === 'select') {
+                        console.log(`${currentTool} mode active - checking intersections...`);
+                        
+                        // Get intersections
+                        const intersects = getIntersects(event);
+                        console.log('Found', intersects.length, 'intersections');
+                        
+                        // Debug: Check what's in the scene
+                        const interactableObjects = [];
+                        scene.traverse((child) => {
+                            if (child.userData && (child.userData.type || child.userData.id)) {
+                                interactableObjects.push({
+                                    name: child.name,
+                                    type: child.type,
+                                    userData: child.userData,
+                                    visible: child.visible,
+                                    isMesh: child instanceof THREE.Mesh
+                                });
+                            }
+                        });
+                        console.log('Scene has', interactableObjects.length, 'interactable objects:', interactableObjects.slice(0, 10));
+                        
+                        // Log first 5 intersections in detail
+                        intersects.slice(0, 5).forEach((intersect, i) => {
+                            const obj = intersect.object;
+                            console.log(`Hit ${i}:`, {
+                                type: obj.type,
+                                userData: obj.userData,
+                                parent: obj.parent?.userData,
+                                name: obj.name,
+                                geometry: obj.geometry?.type,
+                                material: obj.material?.type
+                            });
+                            
+                            // Check parent chain for userData
+                            let parent = obj.parent;
+                            let depth = 0;
+                            while (parent && depth < 3) {
+                                if (parent.userData && (parent.userData.id || parent.userData.type)) {
+                                    console.log(`  Parent at depth ${depth}:`, parent.userData);
+                                }
+                                parent = parent.parent;
+                                depth++;
+                            }
+                        });
+                        
+                        // Try to find clickable object
+                        if (intersects.length > 0) {
+                            let found = false;
+                            
+                            // Check each intersection and their parents
+                            for (let i = 0; i < intersects.length; i++) {
+                                const obj = intersects[i].object;
+                                let target = obj;
+                                
+                                // Check the object and its parents for userData
+                                while (target) {
+                                    if (target.userData && (target.userData.id !== undefined || target.userData.serviceId !== undefined)) {
+                                        console.log('Found clickable object:', target.userData);
+                                        found = true;
+                                        
+                                        const { id, type, serviceId } = target.userData;
+                                        console.log('Handling click for:', { id, type, serviceId });
+                                        
+                                        if (type === 'node' && id !== undefined) {
+                                            console.log('Showing node inspector for id:', id);
+                                            showNodeInspector(id);
+                                        }
+                                        else if (type === 'pod' && id !== undefined) {
+                                            console.log('Showing pod inspector for id:', id);
+                                            showPodInspector(id);
+                                        }
+                                        else if (type === 'deployment' && id !== undefined) {
+                                            console.log('Showing deployment inspector for id:', id);
+                                            showDeploymentInspector(id);
+                                        }
+                                        else if (type === 'service-filter' && serviceId !== undefined) {
+                                            console.log('Showing service inspector for id:', serviceId);
+                                            showServiceInspector(serviceId);
+                                            clusterState.selectedServiceId = serviceId;
+                                        }
+                                        else if (type === 'controlPlane' && id !== undefined) {
+                                            console.log('Showing control plane component inspector');
+                                            showControlPlaneInspector(obj.userData.component);
+                                        }
+                                        else {
+                                            console.log('Unknown type or missing id:', { type, id, serviceId });
+                                        }
+                                        break;
+                                    }
+                                    target = target.parent;
+                                }
+                                
+                                if (found) break;
+                            }
+                            
+                            if (!found) {
+                                console.log('No clickable object found in intersections');
+                                hideInspector();
+                            }
+                        } else {
+                            console.log('No intersections found');
+                            hideInspector();
+                        }
+                    }
+                    console.log('=== END CLICK DEBUG ===');
+                });
             }
 
             function getNextId() { return clusterState.nextId++; }
@@ -1416,7 +1531,19 @@
                 
                 return lbGroup;
             }
-            function createHtmlLabel(text, pos) { const div = document.createElement('div'); div.className = 'label'; div.textContent = text; const label = new THREE.CSS2DObject(div); label.position.copy(pos); return label; }
+            function createHtmlLabel(text, pos, clickHandler = null) { 
+                const div = document.createElement('div'); 
+                div.className = 'label'; 
+                div.textContent = text; 
+                if (clickHandler) {
+                    div.style.pointerEvents = 'auto';
+                    div.style.cursor = 'pointer';
+                    div.onclick = clickHandler;
+                }
+                const label = new THREE.CSS2DObject(div); 
+                label.position.copy(pos); 
+                return label; 
+            }
 
             function reconciliationLoop() { if (clusterState.isPaused) return; let stateChanged = false; Object.values(clusterState.deployments).forEach(dep => { const currentPods = Array.from(dep.podIds).map(id => clusterState.pods[id]).filter(p => p && p.status !== 'Terminating'); if (currentPods.length > dep.replicas) { const podToKill = currentPods[0]; if (podToKill) { terminatePod(podToKill.id, "scaled down"); stateChanged = true; } } else if (currentPods.length < dep.replicas) { const id = getNextId(); clusterState.pods[id] = { id, deploymentId: dep.id, name: `${dep.image}-pod-${id}`, image: dep.image, status: 'Pending', nodeId: null, cpuRequest: dep.cpuRequest, memRequest: dep.memRequest, isVisible: true, labels: { app: dep.image, deployment: dep.name } }; dep.podIds.add(id); logEvent(`Pod for ${dep.name} is Pending.`); stateChanged = true; } }); Object.values(clusterState.pods).filter(p => p.status === 'Pending').forEach(pod => { const node = findSchedulableNode(pod.cpuRequest, pod.memRequest); if (node) { pod.status = 'Running'; pod.nodeId = node.id; node.pods.add(pod.id); recalculateNodeResources(node); createPodVisual(pod, node); logEvent(`Pod ${pod.name} scheduled on Node ${node.name}.`); stateChanged = true; } else { logEvent(`No available Node has enough resources for pod ${pod.name}.`, 'WARN') } }); if (stateChanged) { renderHierarchy(); updateDeploymentList(); updateLabelSelector(); } updateDeploymentVisuals(); updateServiceVisuals(); updateClusterOverview(); updateResourcePoolView(); }
             function createNodeVisual(node) {
@@ -1453,7 +1580,11 @@
                         group.add(orb);
                         node.componentOrbs.push(orb);
                     });
-                    mesh = group; mesh.frustumCulled = false; mesh.add(createHtmlLabel(getLabel("Control Plane"), new THREE.Vector3(0, 1.5, 0)));
+                    mesh = group; mesh.frustumCulled = false; 
+                    const masterLabel = createHtmlLabel(getLabel("Control Plane"), new THREE.Vector3(0, 1.5, 0), () => {
+                        if (currentTool === 'navigate') showNodeInspector(node.id);
+                    });
+                    mesh.add(masterLabel);
                 } else { 
                     // Worker node
                     const width = node.cpu.capacity * CONFIG.NODE_WIDTH_CPU_SCALE; 
@@ -1475,7 +1606,10 @@
                     nodeBox.position.y = height / 2; 
                     nodeBox.frustumCulled = false; 
                     nodeBox.renderOrder = -100; 
-                    nodeBox.add(createHtmlLabel(node.name, new THREE.Vector3(0, height / 2 + .5, 0))); 
+                    const nodeLabel = createHtmlLabel(node.name, new THREE.Vector3(0, height / 2 + .5, 0), () => {
+                        if (currentTool === 'navigate') showNodeInspector(node.id);
+                    });
+                    nodeBox.add(nodeLabel); 
                     group.add(nodeBox);
                     
                     // Add kube-proxy visualization (larger router icon)
@@ -1595,7 +1729,9 @@
                 podMesh.userData = { id: pod.id, type: 'pod' }; 
                 podMesh.scale.set(.01, .01, .01); 
                 
-                const label = createHtmlLabel(pod.image, new THREE.Vector3(0, podSize / 2 + .2, 0)); 
+                const label = createHtmlLabel(pod.image, new THREE.Vector3(0, podSize / 2 + .2, 0), () => {
+                    if (currentTool === 'navigate') showPodInspector(pod.id);
+                }); 
                 label.element.classList.add('pod-label'); 
                 podMesh.add(label); 
                 
@@ -2001,9 +2137,130 @@
                 renderer.setSize(width, height); 
                 labelRenderer.setSize(width, height); 
             }
-            function onPointerDown(event) { if (event.button !== 0 || currentTool !== 'select') return; hasDragged = false; const intersects = getIntersects(event); if (intersects.length > 0) { const obj = intersects.find(i => i.object.userData.type === 'pod')?.object; if (obj) { draggedPod = obj; originalPodState = { position: draggedPod.position.clone(), parent: draggedPod.parent }; controls.enabled = false; } } }
+            let navigateClickStarted = false;
+            
+            function onPointerDown(event) { 
+                if (event.button !== 0) return; 
+                
+                if (currentTool === 'navigate') {
+                    // Mark that a click started in navigate mode
+                    navigateClickStarted = true;
+                }
+                
+                if (currentTool === 'select') {
+                    hasDragged = false; 
+                    const intersects = getIntersects(event); 
+                    if (intersects.length > 0) { 
+                        const obj = intersects.find(i => i.object.userData.type === 'pod')?.object; 
+                        if (obj) { 
+                            draggedPod = obj; 
+                            originalPodState = { position: draggedPod.position.clone(), parent: draggedPod.parent }; 
+                            controls.enabled = false; 
+                        } 
+                    }
+                }
+            }
             function onPointerMove(event) { if (!draggedPod) return; if (!hasDragged) { hasDragged = true; document.body.style.cursor = 'grabbing'; const worldPos = new THREE.Vector3(); draggedPod.getWorldPosition(worldPos); scene.attach(draggedPod); draggedPod.position.copy(worldPos); } const intersects = getIntersects(event); const planeIntersect = intersects.find(i => i.object.userData.type === 'node'); if (planeIntersect) draggedPod.position.set(planeIntersect.point.x, draggedPod.position.y, planeIntersect.point.z); else { const pos = new THREE.Vector3(); raycaster.ray.at(10, pos); draggedPod.position.copy(pos); } }
-            function onPointerUp(event) { if (currentTool !== 'select') return; if (draggedPod) { if (hasDragged) { const intersects = getIntersects(event); const dropTarget = intersects.find(i => i.object.userData.type === 'node' && i.object.userData.id !== originalPodState.parent.userData.id)?.object; if (dropTarget) { const pod = clusterState.pods[draggedPod.userData.id]; const targetNode = clusterState.nodes.find(n => n.id === dropTarget.userData.id); if (targetNode.cpu.usage + pod.cpuRequest <= targetNode.cpu.capacity && targetNode.memory.usage + pod.memRequest <= targetNode.memory.capacity) { const oldNode = clusterState.nodes.find(n => n.id === pod.nodeId); oldNode.pods.delete(pod.id); recalculateNodeResources(oldNode); pod.nodeId = targetNode.id; targetNode.pods.add(pod.id); recalculateNodeResources(targetNode); dropTarget.add(draggedPod); repositionPodInNode(draggedPod, targetNode); logEvent(`Pod ${pod.name} moved to Node ${targetNode.name}.`); } else { logEvent(`Node ${targetNode.name} lacks resources for Pod ${pod.name}.`, 'WARN'); originalPodState.parent.add(draggedPod); repositionPodInNode(draggedPod, originalPodState.parent); } } else { originalPodState.parent.add(draggedPod); draggedPod.position.copy(originalPodState.position); } renderHierarchy(); updateDeploymentList(); draggedPod = null; controls.enabled = true; return; } else if (!hasDragged) { draggedPod = null; controls.enabled = true; } } const intersects = getIntersects(event); Object.values(clusterState.deployments).forEach(d => { const box = threeObjects.get(`dep-${d.id}`); if (box) box.material.emissiveIntensity = 0; }); clusterState.selectedServiceId = null; if (intersects.length > 0) { let obj = intersects.find(i => i.object.userData.id || i.object.userData.serviceId)?.object; if (obj) { if (obj.parent?.userData.type === 'node') obj = obj.parent; } if (obj?.userData) { const { id, type, serviceId } = obj.userData; if (type === 'node' && id) showNodeInspector(id); if (type === 'pod' && id) showPodInspector(id); if (type === 'deployment' && id) showDeploymentInspector(id); if (type === 'service-filter' && serviceId) { showServiceInspector(serviceId); clusterState.selectedServiceId = serviceId; } } } else { hideInspector(); } }
+            function onPointerUp(event) { 
+                console.log('onPointerUp called, currentTool:', currentTool);
+                
+                if (currentTool === 'navigate') {
+                    // Debug: log all intersected objects
+                    const intersects = getIntersects(event);
+                    console.log('Navigate tool - Click intersects:', intersects.length);
+                    intersects.forEach((intersect, i) => {
+                        console.log(`  ${i}: ${intersect.object.type || 'Mesh'}, userData:`, intersect.object.userData, 
+                                    'parent:', intersect.object.parent?.userData);
+                    });
+                    
+                    // Handle navigate tool clicks
+                    if (intersects.length > 0) {
+                        let obj = intersects.find(i => i.object.userData.id || i.object.userData.serviceId)?.object;
+                        if (obj) {
+                            if (obj.parent?.userData.type === 'node') obj = obj.parent;
+                        }
+                        if (obj?.userData) {
+                            const { id, type, serviceId } = obj.userData;
+                            console.log('Navigate click on:', type, id || serviceId);
+                            if (type === 'node' && id) showNodeInspector(id);
+                            if (type === 'pod' && id) showPodInspector(id);
+                            if (type === 'deployment' && id) showDeploymentInspector(id);
+                            if (type === 'service-filter' && serviceId) {
+                                showServiceInspector(serviceId);
+                                clusterState.selectedServiceId = serviceId;
+                            }
+                        }
+                    } else {
+                        hideInspector();
+                    }
+                    return;
+                }
+                
+                if (currentTool !== 'select') return; 
+                
+                if (draggedPod) { 
+                    if (hasDragged) { 
+                        const intersects = getIntersects(event); 
+                        const dropTarget = intersects.find(i => i.object.userData.type === 'node' && i.object.userData.id !== originalPodState.parent.userData.id)?.object; 
+                        if (dropTarget) { 
+                            const pod = clusterState.pods[draggedPod.userData.id]; 
+                            const targetNode = clusterState.nodes.find(n => n.id === dropTarget.userData.id); 
+                            if (targetNode.cpu.usage + pod.cpuRequest <= targetNode.cpu.capacity && targetNode.memory.usage + pod.memRequest <= targetNode.memory.capacity) { 
+                                const oldNode = clusterState.nodes.find(n => n.id === pod.nodeId); 
+                                oldNode.pods.delete(pod.id); 
+                                recalculateNodeResources(oldNode); 
+                                pod.nodeId = targetNode.id; 
+                                targetNode.pods.add(pod.id); 
+                                recalculateNodeResources(targetNode); 
+                                dropTarget.add(draggedPod); 
+                                repositionPodInNode(draggedPod, targetNode); 
+                                logEvent(`Pod ${pod.name} moved to Node ${targetNode.name}.`); 
+                            } else { 
+                                logEvent(`Node ${targetNode.name} lacks resources for Pod ${pod.name}.`, 'WARN'); 
+                                originalPodState.parent.add(draggedPod); 
+                                repositionPodInNode(draggedPod, originalPodState.parent); 
+                            } 
+                        } else { 
+                            originalPodState.parent.add(draggedPod); 
+                            draggedPod.position.copy(originalPodState.position); 
+                        } 
+                        renderHierarchy(); 
+                        updateDeploymentList(); 
+                        draggedPod = null; 
+                        controls.enabled = true; 
+                        return; 
+                    } else if (!hasDragged) { 
+                        draggedPod = null; 
+                        controls.enabled = true; 
+                    } 
+                } 
+                
+                const intersects = getIntersects(event); 
+                Object.values(clusterState.deployments).forEach(d => { 
+                    const box = threeObjects.get(`dep-${d.id}`); 
+                    if (box) box.material.emissiveIntensity = 0; 
+                }); 
+                clusterState.selectedServiceId = null; 
+                
+                if (intersects.length > 0) { 
+                    let obj = intersects.find(i => i.object.userData.id || i.object.userData.serviceId)?.object; 
+                    if (obj) { 
+                        if (obj.parent?.userData.type === 'node') obj = obj.parent; 
+                    } 
+                    if (obj?.userData) { 
+                        const { id, type, serviceId } = obj.userData; 
+                        if (type === 'node' && id) showNodeInspector(id); 
+                        if (type === 'pod' && id) showPodInspector(id); 
+                        if (type === 'deployment' && id) showDeploymentInspector(id); 
+                        if (type === 'service-filter' && serviceId) { 
+                            showServiceInspector(serviceId); 
+                            clusterState.selectedServiceId = serviceId; 
+                        } 
+                    } 
+                } else { 
+                    hideInspector(); 
+                } 
+            }
             function getIntersects(event) { const canvasBounds = renderer.domElement.getBoundingClientRect(); mouse.x = ((event.clientX - canvasBounds.left) / canvasBounds.width) * 2 - 1; mouse.y = -((event.clientY - canvasBounds.top) / canvasBounds.height) * 2 + 1; raycaster.setFromCamera(mouse, camera); return raycaster.intersectObjects(scene.children, true); }
             function repositionPodInNode(podMesh, nodeMesh) { const pod = clusterState.pods[podMesh.userData.id]; const node = clusterState.nodes.find(n => n.id === nodeMesh.userData.id); const podSize = .5 + (pod.cpuRequest + pod.memRequest) * CONFIG.POD_SCALE_FACTOR; const nodeBoxSize = new THREE.Vector3(); new THREE.Box3().setFromObject(nodeMesh).getSize(nodeBoxSize); const podSpacing = podSize * 1.2; const podsPerRow = Math.floor(nodeBoxSize.x / podSpacing); const podIndexOnNode = Array.from(node.pods).indexOf(pod.id); const col = podIndexOnNode % podsPerRow; const row = Math.floor(podIndexOnNode / podsPerRow); const newPos = new THREE.Vector3(-nodeBoxSize.x / 2 + (col * podSpacing) + podSpacing / 2, -nodeBoxSize.y / 2 + podSize / 2, -nodeBoxSize.z / 2 + (row * podSpacing) + podSpacing / 2); new TWEEN.Tween(podMesh.position).to(newPos, 300).easing(TWEEN.Easing.Quadratic.Out).start(); }
             function recalculateNodeResources(node) { node.cpu.usage = 0; node.memory.usage = 0; node.pods.forEach(id => { const p = clusterState.pods[id]; if (p) { node.cpu.usage += p.cpuRequest; node.memory.usage += p.memRequest; } }); }
@@ -2278,6 +2535,7 @@
                             function hideAddNodeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
                             function setTool(toolName) {
                                 currentTool = toolName;
+                                console.log('Tool changed to:', toolName);
                                 document.getElementById('cluster-container').className = `${toolName}-tool`;
                                 document.getElementById('select-tool').classList.toggle('active', toolName === 'select');
                                 document.getElementById('navigate-tool').classList.toggle('active', toolName === 'navigate');
@@ -2358,8 +2616,19 @@
                             document.getElementById('pause-btn').addEventListener('click', () => { clusterState.isPaused = !clusterState.isPaused; document.getElementById('pause-btn').textContent = clusterState.isPaused ? 'Resume' : 'Pause'; });
                             document.getElementById('replica-slider').addEventListener('input', e => document.getElementById('replica-count-label').textContent = e.target.value);
                             // Remove old toggle button listener as we now have unified panels
-                            document.getElementById('select-tool').addEventListener('click', () => setTool('select'));
-                            document.getElementById('navigate-tool').addEventListener('click', () => setTool('navigate'));
+                            document.getElementById('select-tool').addEventListener('click', () => {
+                                console.log('Select tool button clicked');
+                                setTool('select');
+                            });
+                            document.getElementById('navigate-tool').addEventListener('click', () => {
+                                console.log('Navigate tool button clicked');
+                                setTool('navigate');
+                            });
+                            
+                            // Ensure navigate mode is set on startup
+                            setTool('navigate');
+                            console.log('Initial tool set to:', currentTool);
+                            
                             document.addEventListener('keydown', e => {
                                 if (e.key === 's' || e.key === 'S') setTool('select');
                                 if (e.key === 'v' || e.key === 'V') setTool('navigate');
@@ -2578,8 +2847,9 @@
                         const nodeMesh = threeObjects.get(node.id);
                         if (nodeMesh && nodeMesh.children) {
                             nodeMesh.children.forEach(child => {
-                                if (child.isCSS2DObject && child.element.textContent.includes('Control Plane') || 
-                                    child.element.textContent.includes('Cluster Brain')) {
+                                if (child.isCSS2DObject && child.element && 
+                                    (child.element.textContent.includes('Control Plane') || 
+                                     child.element.textContent.includes('Cluster Brain'))) {
                                     child.element.textContent = getLabel('Control Plane');
                                 }
                             });
@@ -2591,7 +2861,7 @@
                 const externalLb = threeObjects.get('external-lb');
                 if (externalLb && externalLb.children) {
                     externalLb.children.forEach(child => {
-                        if (child.isCSS2DObject) {
+                        if (child.isCSS2DObject && child.element) {
                             child.element.textContent = getLabel('Load Balancer') + ' (External)';
                         }
                     });
