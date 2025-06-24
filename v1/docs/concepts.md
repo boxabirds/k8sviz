@@ -23,7 +23,7 @@ Kubernetes terminology can be confusing because it often uses technical implemen
 | **Service Name** | "Name" | The name of the service | Redundant - "Service" + "Name" |
 | **Service Type** | "Routing Type" | How external traffic can reach the service | "Type" is too generic |
 | **etcd** | "Cluster Database" | Stores all cluster configuration and state | Name gives no hint of purpose |
-| **API Server** | "Command Center" | Receives and processes all cluster commands | Reasonable, but could be clearer |
+| **API Server** | "Control Plane API" | Receives and processes all cluster management commands | Reasonable, but could be clearer about being for control operations only |
 | **Scheduler** | "Placement Engine" | Decides which server runs each app | Actually a good name! |
 | **Controller Manager** | "Automation Hub" | Runs all automation loops | "Controller" is vague |
 | **kubelet** | "Node Agent" | Software on each server managing containers | Meaningless name |
@@ -115,7 +115,7 @@ OUTSIDE CLUSTER:
 └── Cloud Load Balancer (for LoadBalancer services)
 
 CONTROL PLANE (Master):
-├── API Server (Command Center)
+├── API Server (Control Plane API)
 ├── etcd (Cluster Database)
 ├── Scheduler (Placement Engine)
 ├── Controller Manager (Automation Hub)

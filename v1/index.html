@@ -680,9 +680,9 @@
                 <input type="text" id="service-name-input" placeholder="my-service">
                 <label for="service-type-selector" data-label="Service Type">Service Type:</label>
                 <select id="service-type-selector">
-                    <option value="ClusterIP" selected>ClusterIP (Internal only)</option>
+                    <option value="ClusterIP">ClusterIP (Internal only)</option>
                     <option value="NodePort">NodePort (External via node ports)</option>
-                    <option value="LoadBalancer">LoadBalancer (External via cloud LB)</option>
+                    <option value="LoadBalancer" selected>LoadBalancer (External via cloud LB)</option>
                 </select>
                 <label for="service-label-selector" data-label="Label Selector">Label Selector:</label>
                 <select id="service-label-selector" multiple
@@ -783,9 +783,74 @@
             };
 
             const clusterState = { nodes: [], pods: {}, deployments: {}, services: {}, isPaused: false, nextId: 0, selectedServiceId: null };
-            let scene, camera, renderer, controls, raycaster, mouse, labelRenderer, userIcon;
+            let scene, camera, renderer, controls, raycaster, mouse, labelRenderer;
             const threeObjects = new Map();
             let draggedPod = null, originalPodState = {}, hasDragged = false, currentTool = 'navigate';
+            let useIntuitive = false; // Initialize label mode
+
+            const labelMappings = {
+                // UI Elements
+                'Cluster Explorer': 'System Overview',
+                'Resource Pool': 'Available Resources',
+                'Hierarchy': 'System Structure',
+                'Inspector': 'Details Panel',
+                'Event Log': 'Activity Monitor',
+                
+                // Main concepts
+                'Control Plane': 'Cluster Brain',
+                'Data Plane': 'Workload Layer',
+                'Network Plane': 'Traffic Layer',
+                'Master Node': 'Management Server',
+                'Worker Node': 'Application Server',
+                
+                // Objects
+                'Pod': 'Container Instance',
+                'Deployment': 'Container Manager',
+                'Service': 'Traffic Router',
+                'Container': 'App Package',
+                
+                // Service types
+                'ClusterIP': 'Internal Only',
+                'NodePort': 'Direct Access',
+                'LoadBalancer': 'Managed External',
+                'Load Balancer': 'External Gateway',
+                
+                // Control plane components
+                'API Server': 'Control Plane API',
+                'etcd': 'Cluster Database',
+                'Scheduler': 'Placement Engine',
+                'Controller Manager': 'Automation Hub',
+                'kube-proxy': 'Network Router',
+                
+                // Actions
+                'Create Deployment': 'Create Container Manager',
+                'Create Service': 'Create Traffic Router',
+                'Add Worker': 'Add Server',
+                'Remove Worker': 'Remove Server',
+                'Scale': 'Adjust Copies',
+                'Kill Pod': 'Stop Instance',
+                'Simulate Failure': 'Test Failure',
+                
+                // Descriptions
+                'Label Selector': 'Container Instance Tags',
+                'Service Name': 'Name',
+                'Service Type': 'Routing Type',
+                'Replicas': 'Copies',
+                'Matching Pods': 'Matching Container Instances',
+                'Active Deployments': 'Active Container Managers',
+                'Active Services': 'Active Traffic Routers',
+                'Nodes': 'Servers',
+                'Deployments': 'Container Managers',
+                'Services': 'Traffic Routers'
+            };
+
+            // Get appropriate label
+            function getLabel(k8sLabel) {
+                if (useIntuitive && labelMappings[k8sLabel]) {
+                    return labelMappings[k8sLabel];
+                }
+                return k8sLabel;
+            }
 
             function initThree() {
                 const container = document.getElementById('cluster-container');
@@ -794,16 +859,21 @@
                 scene.fog = new THREE.Fog(0x1a1a1a, 40, 100);
                 camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 2000); camera.position.set(10, 15, 20);
                 renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(window.innerWidth, window.innerHeight); container.appendChild(renderer.domElement);
-                labelRenderer = new THREE.CSS2DRenderer(); labelRenderer.setSize(window.innerWidth, window.innerHeight); labelRenderer.domElement.style.position = 'absolute'; labelRenderer.domElement.style.top = '0px'; container.appendChild(labelRenderer.domElement);
-                controls = new THREE.OrbitControls(camera, labelRenderer.domElement); controls.enableDamping = true; controls.dampingFactor = 0.05; controls.minDistance = 1; controls.maxDistance = 100; controls.target.set(0, 2, -5);
+                labelRenderer = new THREE.CSS2DRenderer(); 
+                labelRenderer.setSize(window.innerWidth, window.innerHeight); 
+                labelRenderer.domElement.style.position = 'absolute'; 
+                labelRenderer.domElement.style.top = '0px';
+                labelRenderer.domElement.style.pointerEvents = 'none'; // Don't block clicks
+                container.appendChild(labelRenderer.domElement);
+                controls = new THREE.OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.dampingFactor = 0.05; controls.minDistance = 1; controls.maxDistance = 100; controls.target.set(0, 2, -5);
                 const ambient = new THREE.AmbientLight(0xffffff, 0.5); scene.add(ambient); const light = new THREE.DirectionalLight(0xffffff, 0.7); light.position.set(10, 20, 5); scene.add(light);
                 raycaster = new THREE.Raycaster(); mouse = new THREE.Vector2();
-                createUserIcon();
                 createPlaneSeparators();
+                createExternalLoadBalancer();
                 window.addEventListener('resize', onWindowResize, false);
-                labelRenderer.domElement.addEventListener('pointerdown', onPointerDown, false);
-                labelRenderer.domElement.addEventListener('pointermove', onPointerMove, false);
-                labelRenderer.domElement.addEventListener('pointerup', onPointerUp, false);
+                renderer.domElement.addEventListener('pointerdown', onPointerDown, false);
+                renderer.domElement.addEventListener('pointermove', onPointerMove, false);
+                renderer.domElement.addEventListener('pointerup', onPointerUp, false);
             }
 
             function getNextId() { return clusterState.nextId++; }
@@ -915,18 +985,17 @@
                 const srv = clusterState.services[serviceId];
                 if (!srv) return;
                 
-                // Remove visual
-                const serviceMesh = threeObjects.get(`srv-${srv.id}`);
-                if (serviceMesh) {
-                    scene.remove(serviceMesh);
-                    threeObjects.delete(`srv-${srv.id}`);
+                // Remove network lines associated with this service
+                if (srv.networkLines) {
+                    srv.networkLines.forEach(line => scene.remove(line));
+                    srv.networkLines = [];
                 }
                 
                 // Remove from state
                 delete clusterState.services[serviceId];
                 
                 // Update UI
-                recalculateServicePositions();
+                updateKubeProxyServiceFilters();
                 updateServiceList();
                 updateNodePortIndicators(); // Remove port indicators if NodePort
                 renderHierarchy();
@@ -938,10 +1007,10 @@
             function simulateTraffic(serviceId) {
                 console.log('simulateTraffic called for service:', serviceId);
                 const srv = clusterState.services[serviceId]; 
-                if (!srv) return; 
+                if (!srv) return;
                 
-                const serviceMesh = threeObjects.get(`srv-${srv.id}`);
-                if (!serviceMesh) return;
+                // Initialize round-robin counter if not exists
+                if (!srv.roundRobinIndex) srv.roundRobinIndex = 0;
                 
                 // Find pods that match the service's label selector
                 const matchingPods = Object.values(clusterState.pods).filter(pod => {
@@ -954,213 +1023,208 @@
                     return;
                 }
                 
-                // Select a random pod for this request (simulating load balancing)
-                const targetPod = matchingPods[Math.floor(Math.random() * matchingPods.length)];
-                const targetPodMesh = threeObjects.get(targetPod.id);
-                if (!targetPodMesh) return;
+                // Create a stream of 10 requests with round-robin load balancing
+                const numRequests = 10;
+                const requestDelay = 300; // ms between requests
                 
-                const targetNode = clusterState.nodes.find(n => n.id === targetPod.nodeId);
-                if (!targetNode) return;
+                for (let i = 0; i < numRequests; i++) {
+                    setTimeout(() => {
+                        // Round-robin pod selection
+                        const targetPod = matchingPods[srv.roundRobinIndex % matchingPods.length];
+                        srv.roundRobinIndex++;
+                        
+                        const targetPodMesh = threeObjects.get(targetPod.id);
+                        if (!targetPodMesh) return;
+                        
+                        const targetNode = clusterState.nodes.find(n => n.id === targetPod.nodeId);
+                        if (!targetNode) return;
+                        
+                        animateSingleRequest(srv, targetPod, targetPodMesh, targetNode, i, matchingPods);
+                    }, i * requestDelay);
+                }
+            }
+            
+            function animateSingleRequest(srv, targetPod, targetPodMesh, targetNode, requestIndex, matchingPods) {
                 
-                // Get positions
-                const podPos = new THREE.Vector3();
-                targetPodMesh.getWorldPosition(podPos);
+                // Helper function to pulse a cable
+                function pulseCable(line) {
+                    if (!line || !line.material) return;
+                    const origOpacity = line.material.opacity;
+                    const origLinewidth = line.material.linewidth || 2;
+                    new TWEEN.Tween(line.material)
+                        .to({ opacity: 0.8, linewidth: origLinewidth * 1.5 }, 300)
+                        .chain(new TWEEN.Tween(line.material)
+                            .to({ opacity: origOpacity, linewidth: origLinewidth }, 300))
+                        .start();
+                }
                 
-                const servicePos = serviceMesh.position.clone();
+                // Find relevant cables/lines for this traffic flow
+                const cables = [];
+                const cablesToPulse = [];
                 
-                // Determine traffic source and path based on service type
+                // Determine traffic source and build cable path
                 let sourcePos;
                 let sourceName;
-                let entryNodeMesh = null;
-                let entryNodePos = null;
+                
+                // Always find the kube-proxy to pod cable first
+                const kubeProxyToPodLine = srv.networkLines.find(line => 
+                    line.userData.type === 'kubeproxy-to-pod' && 
+                    line.userData.podId === targetPod.id
+                );
                 
                 if (srv.type === 'ClusterIP' || !srv.type) {
-                    // Internal traffic from another pod
-                    const otherPods = Object.values(clusterState.pods).filter(p => p.id !== targetPod.id && p.status === 'Running');
-                    if (otherPods.length > 0) {
-                        const sourcePod = otherPods[Math.floor(Math.random() * otherPods.length)];
-                        const sourcePodMesh = threeObjects.get(sourcePod.id);
-                        if (sourcePodMesh) {
-                            sourcePos = new THREE.Vector3();
-                            sourcePodMesh.getWorldPosition(sourcePos);
-                            sourceName = sourcePod.name;
+                    // Internal traffic: start from kube-proxy position
+                    if (targetNode.kubeProxy) {
+                        sourcePos = new THREE.Vector3();
+                        targetNode.kubeProxy.getWorldPosition(sourcePos);
+                        sourceName = 'Internal';
+                        
+                        if (kubeProxyToPodLine && kubeProxyToPodLine.userData.cable) {
+                            cables.push(kubeProxyToPodLine.userData.cable);
+                            cablesToPulse.push(kubeProxyToPodLine);
                         }
                     }
                 } else if (srv.type === 'NodePort') {
-                    // External traffic enters through a random node's NodePort
-                    const internetMesh = threeObjects.get('internet');
-                    if (internetMesh) {
-                        sourcePos = internetMesh.position.clone();
-                        sourceName = 'Internet';
+                    // External traffic through NodePort: start from node edge
+                    if (targetNode.kubeProxy) {
+                        sourcePos = new THREE.Vector3();
+                        targetNode.kubeProxy.getWorldPosition(sourcePos);
+                        sourcePos.x -= 3; // Start from edge of node
+                        sourceName = 'External';
                         
-                        // Pick a random node as entry point
-                        const workerNodes = clusterState.nodes.filter(n => n.type === 'worker');
-                        if (workerNodes.length > 0) {
-                            const entryNode = workerNodes[Math.floor(Math.random() * workerNodes.length)];
-                            entryNodeMesh = threeObjects.get(entryNode.id);
-                            if (entryNodeMesh) {
-                                entryNodePos = new THREE.Vector3();
-                                entryNodeMesh.getWorldPosition(entryNodePos);
-                                entryNodePos.y += 2; // Position above the node
-                                logEvent(`External traffic entering through ${entryNode.name}:${srv.nodePort}`, 'INFO');
-                            }
+                        if (kubeProxyToPodLine && kubeProxyToPodLine.userData.cable) {
+                            cables.push(kubeProxyToPodLine.userData.cable);
+                            cablesToPulse.push(kubeProxyToPodLine);
                         }
+                        
+                        logEvent(`External traffic entering through ${targetNode.name}:${srv.nodePort}`, 'INFO');
                     }
                 } else if (srv.type === 'LoadBalancer') {
-                    // External traffic through cloud load balancer
-                    const internetMesh = threeObjects.get('internet');
-                    if (internetMesh) {
-                        sourcePos = internetMesh.position.clone();
-                        sourceName = 'Internet';
+                    // External traffic through load balancer
+                    const externalLb = threeObjects.get('external-lb');
+                    
+                    if (externalLb) {
+                        sourcePos = externalLb.position.clone();
+                        sourceName = 'External LB';
                         
-                        // Create temporary cloud LB visualization if not exists
-                        let cloudLbMesh = threeObjects.get(`cloud-lb-${srv.id}`);
-                        if (!cloudLbMesh) {
-                            const lbGroup = new THREE.Group();
-                            const lbMat = new THREE.MeshBasicMaterial({ 
-                                color: 0x4285F4, // Google Cloud blue
-                                transparent: true,
-                                opacity: 0.8
-                            });
-                            
-                            // Create cloud icon
-                            const cloudGeom = new THREE.SphereGeometry(1, 16, 16);
-                            const cloud = new THREE.Mesh(cloudGeom, lbMat);
-                            cloud.scale.set(1.5, 0.8, 1);
-                            lbGroup.add(cloud);
-                            
-                            // Add LB icon
-                            const iconGeom = new THREE.BoxGeometry(0.6, 0.6, 0.1);
-                            const iconMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
-                            const icon = new THREE.Mesh(iconGeom, iconMat);
-                            icon.position.z = 0.5;
-                            lbGroup.add(icon);
-                            
-                            // Position between internet and service
-                            const internetPos = internetMesh.position.clone();
-                            lbGroup.position.lerpVectors(internetPos, servicePos, 0.5);
-                            lbGroup.position.y = internetPos.y - 3;
-                            
-                            scene.add(lbGroup);
-                            threeObjects.set(`cloud-lb-${srv.id}`, lbGroup);
-                            cloudLbMesh = lbGroup;
-                            
-                            // Remove after animation completes
-                            setTimeout(() => {
-                                scene.remove(lbGroup);
-                                threeObjects.delete(`cloud-lb-${srv.id}`);
-                            }, 5000);
+                        // Find external LB to kube-proxy cable
+                        const lbToKubeProxyLine = externalLb.connections?.find(line => 
+                            line.userData.nodeId === targetNode.id
+                        );
+                        if (lbToKubeProxyLine && lbToKubeProxyLine.userData.cable) {
+                            cables.push(lbToKubeProxyLine.userData.cable);
+                            cablesToPulse.push(lbToKubeProxyLine);
                         }
                         
-                        entryNodePos = cloudLbMesh.position.clone();
+                        // Add kube-proxy to pod cable
+                        if (kubeProxyToPodLine && kubeProxyToPodLine.userData.cable) {
+                            cables.push(kubeProxyToPodLine.userData.cable);
+                            cablesToPulse.push(kubeProxyToPodLine);
+                        }
+                        
+                        // Animate the external LB
+                        const lbMesh = externalLb.children[0];
+                        if (lbMesh && lbMesh.material) {
+                            const origIntensity = lbMesh.material.emissiveIntensity;
+                            new TWEEN.Tween(lbMesh.material)
+                                .to({ emissiveIntensity: 0.8 }, 300)
+                                .chain(new TWEEN.Tween(lbMesh.material)
+                                    .to({ emissiveIntensity: origIntensity }, 300))
+                                .start();
+                        }
                     }
                 }
                 
-                if (!sourcePos) return;
-                
-                // Get kube-proxy position for the target node
-                let kubeProxyPos;
-                if (targetNode.kubeProxy) {
-                    kubeProxyPos = new THREE.Vector3();
-                    targetNode.kubeProxy.getWorldPosition(kubeProxyPos);
-                }
+                if (!sourcePos || cables.length === 0) return;
                 
                 // Log the routing decision
                 const routePath = srv.type === 'NodePort' ? 
-                    `${sourceName} → Node:${srv.nodePort} → ${srv.name} → ${targetNode.name}/${targetPod.name}` :
+                    `${sourceName} → Node:${srv.nodePort} → kube-proxy → ${targetPod.name}` :
                     srv.type === 'LoadBalancer' ?
-                    `${sourceName} → Cloud LB → ${srv.name} → ${targetNode.name}/${targetPod.name}` :
-                    `${sourceName} → ${srv.name} → ${targetNode.name}/${targetPod.name}`;
+                    `${sourceName} → Cloud LB → kube-proxy → ${targetPod.name}` :
+                    `${sourceName} → kube-proxy → ${targetPod.name}`;
                 logEvent(routePath, 'INFO');
                 
-                // Animate kube-proxy glow
+                // Animate kube-proxy glow (no scaling)
                 if (targetNode.kubeProxy) {
                     const originalIntensity = targetNode.kubeProxy.material.emissiveIntensity;
-                    const originalScale = targetNode.kubeProxy.scale.x;
                     
-                    // Glow and scale animation
+                    // Just glow, no scale animation
                     new TWEEN.Tween(targetNode.kubeProxy.material)
-                        .to({ emissiveIntensity: 1.0 }, 200)
+                        .to({ emissiveIntensity: 0.8 }, 200)
                         .chain(new TWEEN.Tween(targetNode.kubeProxy.material)
                             .to({ emissiveIntensity: originalIntensity }, 200))
                         .start();
-                        
-                    new TWEEN.Tween(targetNode.kubeProxy.scale)
-                        .to({ x: originalScale * 1.2, y: originalScale * 1.2, z: originalScale * 1.2 }, 200)
-                        .chain(new TWEEN.Tween(targetNode.kubeProxy.scale)
-                            .to({ x: originalScale, y: originalScale, z: originalScale }, 200))
-                        .start();
                 }
                 
-                // Animate service mesh
-                if (serviceMesh) {
-                    const serviceGlow = serviceMesh.children?.[0] || serviceMesh;
-                    if (serviceGlow.material) {
-                        const origOpacity = serviceGlow.material.opacity || 1;
-                        new TWEEN.Tween(serviceGlow.material)
-                            .to({ opacity: 1 }, 300)
-                            .chain(new TWEEN.Tween(serviceGlow.material)
-                                .to({ opacity: origOpacity }, 300))
-                            .start();
+                // Pulse the cables
+                cablesToPulse.forEach(cable => pulseCable(cable));
+                
+                // Get the pod position
+                const podPos = new THREE.Vector3();
+                targetPodMesh.getWorldPosition(podPos);
+                
+                // Create combined path from cables that goes all the way to the pod
+                let combinedPath;
+                if (cables.length > 0) {
+                    // Build path that follows cables to the pod
+                    const points = [];
+                    points.push(sourcePos);
+                    
+                    // Add cable points
+                    cables.forEach((cable, index) => {
+                        const cablePoints = cable.getPoints(20);
+                        if (index === 0) {
+                            points.push(...cablePoints);
+                        } else {
+                            // Skip first point to avoid duplication
+                            points.push(...cablePoints.slice(1));
+                        }
+                    });
+                    
+                    // Make sure path ends at pod
+                    if (points[points.length - 1].distanceTo(podPos) > 0.1) {
+                        points.push(podPos);
                     }
+                    
+                    combinedPath = new THREE.CatmullRomCurve3(points);
+                } else {
+                    // Fallback: create simple path if no cables found
+                    combinedPath = new THREE.CatmullRomCurve3([sourcePos, podPos]);
                 }
                 
-                // Create the path for request based on service type
-                const pathPoints = [sourcePos];
-                
-                // Add entry point for external traffic
-                if (entryNodePos) {
-                    pathPoints.push(entryNodePos);
-                }
-                
-                // Add service position
-                pathPoints.push(servicePos);
-                
-                // Add kube-proxy if available
-                if (kubeProxyPos) {
-                    pathPoints.push(kubeProxyPos);
-                }
-                
-                // Add final destination
-                pathPoints.push(podPos);
-                
-                const requestPath = new THREE.CatmullRomCurve3(pathPoints);
-                
-                // Create a single larger, more visible request particle
-                const requestGeom = new THREE.SphereGeometry(0.4, 32, 32);
+                // Create a small white pearl particle (20% of previous size)
+                const requestGeom = new THREE.SphereGeometry(0.05, 8, 8);
                 const requestMat = new THREE.MeshPhongMaterial({ 
-                    color: 0x00FF00,
-                    emissive: 0x00FF00,
-                    emissiveIntensity: 0.8,
+                    color: 0xFFFFFF,
+                    emissive: 0xFFFFFF,
+                    emissiveIntensity: 0.5,
                     shininess: 100
                 });
                 const requestParticle = new THREE.Mesh(requestGeom, requestMat);
                 requestParticle.position.copy(sourcePos);
                 scene.add(requestParticle);
                 
-                // Add a glowing aura
-                const auraGeom = new THREE.SphereGeometry(0.6, 32, 32);
+                // Add a subtle glow
+                const auraGeom = new THREE.SphereGeometry(0.07, 8, 8);
                 const auraMat = new THREE.MeshBasicMaterial({
-                    color: 0x00FF00,
+                    color: 0xFFFFFF,
                     transparent: true,
-                    opacity: 0.3
+                    opacity: 0.2
                 });
                 const aura = new THREE.Mesh(auraGeom, auraMat);
                 requestParticle.add(aura);
                 
-                // Animate request particle along path
+                // Animate request particle along cable path (faster: 3 seconds)
                 const requestTween = new TWEEN.Tween({ t: 0 })
-                    .to({ t: 1 }, 4000)
+                    .to({ t: 1 }, 3000)
                     .easing(TWEEN.Easing.Quadratic.InOut)
                     .onUpdate(({ t }) => {
-                        requestPath.getPointAt(t, requestParticle.position);
-                        // Pulse effect
-                        const scale = 1 + Math.sin(t * Math.PI * 8) * 0.3;
+                        combinedPath.getPointAt(t, requestParticle.position);
+                        // Subtle pulse
+                        const scale = 1 + Math.sin(t * Math.PI * 4) * 0.1;
                         requestParticle.scale.setScalar(scale);
-                        aura.scale.setScalar(1.5 * scale);
-                        
-                        // Update aura opacity
-                        auraMat.opacity = 0.3 + Math.sin(t * Math.PI * 8) * 0.2;
+                        aura.scale.setScalar(1.3 * scale);
                     })
                     .onComplete(() => {
                         scene.remove(requestParticle);
@@ -1170,75 +1234,55 @@
                             const origEmissive = targetPodMesh.material.emissiveIntensity || 0;
                             targetPodMesh.material.emissive = new THREE.Color(0x00FF00);
                             new TWEEN.Tween(targetPodMesh.material)
-                                .to({ emissiveIntensity: 0.5 }, 300)
+                                .to({ emissiveIntensity: 0.5 }, 200)
                                 .chain(new TWEEN.Tween(targetPodMesh.material)
-                                    .to({ emissiveIntensity: origEmissive }, 300))
+                                    .to({ emissiveIntensity: origEmissive }, 200))
                                 .start();
                         }
                         
-                        // Create response particle
-                        const responseGeom = new THREE.SphereGeometry(0.4, 32, 32);
+                        // Create small response particle (blue)
+                        const responseGeom = new THREE.SphereGeometry(0.05, 8, 8);
                         const responseMat = new THREE.MeshPhongMaterial({ 
                             color: 0x2196F3,
                             emissive: 0x2196F3,
-                            emissiveIntensity: 0.8,
+                            emissiveIntensity: 0.5,
                             shininess: 100
                         });
                         const responseParticle = new THREE.Mesh(responseGeom, responseMat);
                         responseParticle.position.copy(podPos);
                         scene.add(responseParticle);
                         
-                        // Add response aura
-                        const respAuraGeom = new THREE.SphereGeometry(0.6, 32, 32);
+                        // Add response glow
+                        const respAuraGeom = new THREE.SphereGeometry(0.07, 8, 8);
                         const respAuraMat = new THREE.MeshBasicMaterial({
                             color: 0x2196F3,
                             transparent: true,
-                            opacity: 0.3
+                            opacity: 0.2
                         });
                         const respAura = new THREE.Mesh(respAuraGeom, respAuraMat);
                         responseParticle.add(respAura);
                         
-                        // Animate response back
+                        // Animate response back along same cable
                         new TWEEN.Tween({ t: 0 })
-                            .to({ t: 1 }, 3000)
+                            .to({ t: 1 }, 2500)
                             .easing(TWEEN.Easing.Quadratic.InOut)
                             .onUpdate(({ t }) => {
                                 // Reverse path for response
-                                requestPath.getPointAt(1 - t, responseParticle.position);
-                                const scale = 1 + Math.sin(t * Math.PI * 8) * 0.3;
+                                combinedPath.getPointAt(1 - t, responseParticle.position);
+                                const scale = 1 + Math.sin(t * Math.PI * 4) * 0.1;
                                 responseParticle.scale.setScalar(scale);
-                                respAura.scale.setScalar(1.5 * scale);
-                                respAuraMat.opacity = 0.3 + Math.sin(t * Math.PI * 8) * 0.2;
+                                respAura.scale.setScalar(1.3 * scale);
                             })
                             .onComplete(() => {
                                 scene.remove(responseParticle);
-                                logEvent(`Response sent back to ${sourceName}`, 'INFO');
+                                if (requestIndex === 0) {
+                                    logEvent(`Traffic routed to pods: ${matchingPods.map(p => p.name).join(', ')}`, 'INFO');
+                                }
                             })
                             .start();
                     })
                     .start();
-                
-                // Add glowing line effect along the path
-                const linePoints = requestPath.getPoints(50);
-                const lineGeom = new THREE.BufferGeometry().setFromPoints(linePoints);
-                const lineMat = new THREE.LineBasicMaterial({
-                    color: 0x00FF00,
-                    transparent: true,
-                    opacity: 0.3,
-                    linewidth: 2
-                });
-                const pathLine = new THREE.Line(lineGeom, lineMat);
-                scene.add(pathLine);
-                
-                // Fade out the line
-                new TWEEN.Tween(lineMat)
-                    .to({ opacity: 0 }, 4000)
-                    .onComplete(() => {
-                        scene.remove(pathLine);
-                    })
-                    .start();
             }
-            function createUserIcon() { const loader = new THREE.TextureLoader(); loader.load('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0wIDNjMS42NiAwIDMgMS4zNCAzIDNzLTEuMzQgMy0zIDMtMy0xLjM0LTMtMyAxLjM0LTMgMy0zem0wIDE0LjJjLTIuNSAwLTQuNzEtMS4yOC02LTIuMjIuMDMtMS45OSA0LTMuMDggNi0zLjA4czUuOTcgMS4wOSA2IDMuMDhjLTEuMjkgLjk0LTMuNSAyLjIyLTYgMi4yMnoiLz48L3N2Zz4=', texture => { const mat = new THREE.SpriteMaterial({ map: texture }); userIcon = new THREE.Sprite(mat); userIcon.position.set(20, 10, 0); userIcon.scale.set(2, 2, 2); scene.add(userIcon); }) }
             function createPlaneSeparators() {
                 const planeSize = 50;
                 Object.entries(CONFIG.PLANES).forEach(([key, plane]) => {
@@ -1261,11 +1305,12 @@
                     threeObjects.set(`plane-${key}`, planeMesh);
 
                     // Add plane label
-                    const label = createHtmlLabel(plane.label, new THREE.Vector3(25, plane.y, 0));
+                    const label = createHtmlLabel(getLabel(plane.label), new THREE.Vector3(25, plane.y, 0));
                     label.element.style.fontSize = '18px';
                     label.element.style.fontWeight = 'bold';
                     label.element.style.color = '#' + plane.color.toString(16).padStart(6, '0');
                     scene.add(label);
+                    planeMesh.label = label; // Store reference for updates
                 });
                 
                 // Create external traffic source (Internet cloud)
@@ -1309,8 +1354,8 @@
                 const world = new THREE.Mesh(worldGeom, worldMat);
                 internetGroup.add(world);
                 
-                // Position above network plane
-                internetGroup.position.set(0, CONFIG.PLANES.NETWORK.y + 8, 15);
+                // Position above network plane, closer to the cluster
+                internetGroup.position.set(-8, CONFIG.PLANES.NETWORK.y + 8, 5);
                 internetGroup.userData = { type: 'internet', id: 'internet' };
                 
                 // Add label
@@ -1322,6 +1367,55 @@
                 scene.add(internetGroup);
                 threeObjects.set('internet', internetGroup);
             }
+            
+            function createExternalLoadBalancer() {
+                // Create external load balancer visualization
+                const lbGroup = new THREE.Group();
+                
+                // Main sphere
+                const lbGeom = new THREE.SphereGeometry(1.5, 32, 32);
+                const lbMat = new THREE.MeshPhongMaterial({
+                    color: 0x4285F4, // Google Cloud blue
+                    emissive: 0x4285F4,
+                    emissiveIntensity: 0.2,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const lbMesh = new THREE.Mesh(lbGeom, lbMat);
+                lbGroup.add(lbMesh);
+                
+                // Add rings to indicate it's a network device
+                for (let i = 0; i < 2; i++) {
+                    const ringGeom = new THREE.TorusGeometry(2 + i * 0.3, 0.1, 8, 32);
+                    const ringMat = new THREE.MeshBasicMaterial({
+                        color: 0x4285F4,
+                        opacity: 0.5 - i * 0.2,
+                        transparent: true
+                    });
+                    const ring = new THREE.Mesh(ringGeom, ringMat);
+                    ring.rotation.x = Math.PI / 2;
+                    ring.rotation.z = i * Math.PI / 4;
+                    lbGroup.add(ring);
+                }
+                
+                // Position between internet and cluster
+                lbGroup.position.set(-5, CONFIG.PLANES.NETWORK.y + 5, 8);
+                lbGroup.userData = { type: 'loadbalancer', id: 'external-lb' };
+                
+                // Add label
+                const lbLabel = createHtmlLabel(getLabel('Load Balancer') + ' (External)', new THREE.Vector3(0, 2, 0));
+                lbLabel.element.style.fontSize = '14px';
+                lbLabel.element.style.fontWeight = 'bold';
+                lbGroup.add(lbLabel);
+                
+                scene.add(lbGroup);
+                threeObjects.set('external-lb', lbGroup);
+                
+                // Initially hide it
+                lbGroup.visible = false;
+                
+                return lbGroup;
+            }
             function createHtmlLabel(text, pos) { const div = document.createElement('div'); div.className = 'label'; div.textContent = text; const label = new THREE.CSS2DObject(div); label.position.copy(pos); return label; }
 
             function reconciliationLoop() { if (clusterState.isPaused) return; let stateChanged = false; Object.values(clusterState.deployments).forEach(dep => { const currentPods = Array.from(dep.podIds).map(id => clusterState.pods[id]).filter(p => p && p.status !== 'Terminating'); if (currentPods.length > dep.replicas) { const podToKill = currentPods[0]; if (podToKill) { terminatePod(podToKill.id, "scaled down"); stateChanged = true; } } else if (currentPods.length < dep.replicas) { const id = getNextId(); clusterState.pods[id] = { id, deploymentId: dep.id, name: `${dep.image}-pod-${id}`, image: dep.image, status: 'Pending', nodeId: null, cpuRequest: dep.cpuRequest, memRequest: dep.memRequest, isVisible: true, labels: { app: dep.image, deployment: dep.name } }; dep.podIds.add(id); logEvent(`Pod for ${dep.name} is Pending.`); stateChanged = true; } }); Object.values(clusterState.pods).filter(p => p.status === 'Pending').forEach(pod => { const node = findSchedulableNode(pod.cpuRequest, pod.memRequest); if (node) { pod.status = 'Running'; pod.nodeId = node.id; node.pods.add(pod.id); recalculateNodeResources(node); createPodVisual(pod, node); logEvent(`Pod ${pod.name} scheduled on Node ${node.name}.`); stateChanged = true; } else { logEvent(`No available Node has enough resources for pod ${pod.name}.`, 'WARN') } }); if (stateChanged) { renderHierarchy(); updateDeploymentList(); updateLabelSelector(); } updateDeploymentVisuals(); updateServiceVisuals(); updateClusterOverview(); updateResourcePoolView(); }
@@ -1330,10 +1424,10 @@
                     const group = new THREE.Group(); const foundationGeom = new THREE.BoxGeometry(1, 1, 1); const foundationMat = new THREE.MeshLambertMaterial({ color: CONFIG.COLORS.MASTER_NODE, transparent: true, opacity: .6 }); const foundationMesh = new THREE.Mesh(foundationGeom, foundationMat); foundationMesh.position.y = -.5; foundationMesh.frustumCulled = false; foundationMesh.renderOrder = -2; const coreMat = new THREE.MeshLambertMaterial({ color: CONFIG.COLORS.MASTER_CORE }); node.coreMesh = new THREE.Mesh(new THREE.SphereGeometry(.5, 16, 16), coreMat); node.coreMesh.position.y = 0; group.add(foundationMesh, node.coreMesh);
                     // Add control plane component orbs
                     const components = [
-                        { name: 'API Server', angle: 0, color: 0x4CAF50 },
-                        { name: 'etcd', angle: Math.PI / 2, color: 0x2196F3 },
-                        { name: 'Scheduler', angle: Math.PI, color: 0xFFC107 },
-                        { name: 'Controller Manager', angle: 3 * Math.PI / 2, color: 0xFF5722 }
+                        { name: 'API Server', key: 'API Server', angle: 0, color: 0x4CAF50 },
+                        { name: 'etcd', key: 'etcd', angle: Math.PI / 2, color: 0x2196F3 },
+                        { name: 'Scheduler', key: 'Scheduler', angle: Math.PI, color: 0xFFC107 },
+                        { name: 'Controller Manager', key: 'Controller Manager', angle: 3 * Math.PI / 2, color: 0xFF5722 }
                     ];
                     node.componentOrbs = [];
                     components.forEach(comp => {
@@ -1351,14 +1445,15 @@
                             0.3,
                             Math.sin(comp.angle) * radius
                         );
-                        const label = createHtmlLabel(comp.name, new THREE.Vector3(0, 0.3, 0));
+                        const label = createHtmlLabel(getLabel(comp.key), new THREE.Vector3(0, 0.3, 0));
                         label.element.style.fontSize = '10px';
                         label.element.style.padding = '2px 6px';
                         orb.add(label);
+                        orb.label = label; // Store reference for updates
                         group.add(orb);
                         node.componentOrbs.push(orb);
                     });
-                    mesh = group; mesh.frustumCulled = false; mesh.add(createHtmlLabel("Control Plane", new THREE.Vector3(0, 1.5, 0)));
+                    mesh = group; mesh.frustumCulled = false; mesh.add(createHtmlLabel(getLabel("Control Plane"), new THREE.Vector3(0, 1.5, 0)));
                 } else { 
                     // Worker node
                     const width = node.cpu.capacity * CONFIG.NODE_WIDTH_CPU_SCALE; 
@@ -1383,21 +1478,22 @@
                     nodeBox.add(createHtmlLabel(node.name, new THREE.Vector3(0, height / 2 + .5, 0))); 
                     group.add(nodeBox);
                     
-                    // Add kube-proxy visualization (small router icon)
-                    const kubeProxyGeom = new THREE.BoxGeometry(0.8, 0.4, 0.8);
+                    // Add kube-proxy visualization (larger router icon)
+                    const kubeProxyGeom = new THREE.BoxGeometry(2.0, 1.0, 2.0); // Made 2.5x larger
                     const kubeProxyMat = new THREE.MeshLambertMaterial({
                         color: 0x00BCD4, // Network color
                         emissive: 0x00BCD4,
                         emissiveIntensity: 0.2
                     });
                     const kubeProxy = new THREE.Mesh(kubeProxyGeom, kubeProxyMat);
-                    kubeProxy.position.set(width/2 - 0.8, height - 0.5, 0);
+                    kubeProxy.position.set(width/2 - 1.5, height - 0.8, 0);
                     kubeProxy.userData = { type: 'kube-proxy', nodeId: node.id };
                     
                     // Add label for kube-proxy
-                    const proxyLabel = createHtmlLabel(getLabel('kube-proxy'), new THREE.Vector3(0, 0.4, 0));
-                    proxyLabel.element.style.fontSize = '10px';
-                    proxyLabel.element.style.padding = '2px 4px';
+                    const proxyLabel = createHtmlLabel(getLabel('kube-proxy'), new THREE.Vector3(0, 0.6, 0));
+                    proxyLabel.element.style.fontSize = '12px';
+                    proxyLabel.element.style.padding = '4px 8px';
+                    proxyLabel.element.style.fontWeight = 'bold';
                     kubeProxy.add(proxyLabel);
                     
                     group.add(kubeProxy);
@@ -1510,104 +1606,67 @@
                 recalculateServicePositions(); 
             }
             function createServiceVisual(srv) {
-                // Find the first matching pod to determine color
-                const matchingPod = Object.values(clusterState.pods).find(pod => {
-                    if (!pod.labels || !srv.selector) return false;
-                    return Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value);
-                });
-                const color = matchingPod ?
-                    new THREE.Color(CONFIG.APP_COLORS[matchingPod.image] || CONFIG.APP_COLORS.default) :
-                    new THREE.Color(CONFIG.COLORS.PIPE); // Default color if no pods match
-
-                let portalMesh;
-                const serviceType = srv.type || 'ClusterIP';
-                
-                if (serviceType === 'ClusterIP') {
-                    // Ring shape for ClusterIP (internal only)
-                    const portalGeom = new THREE.TorusGeometry(1.5, .2, 16, 100);
-                    const portalMat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
-                    portalMesh = new THREE.Mesh(portalGeom, portalMat);
-                    portalMesh.rotation.x = Math.PI / 2;
-                } else if (serviceType === 'NodePort') {
-                    // Box with port indicators for NodePort
-                    const group = new THREE.Group();
-                    const boxGeom = new THREE.BoxGeometry(2, 0.5, 2);
-                    const boxMat = new THREE.MeshBasicMaterial({ 
-                        color, 
-                        transparent: true, 
-                        opacity: 0.7,
-                        side: THREE.DoubleSide 
-                    });
-                    const box = new THREE.Mesh(boxGeom, boxMat);
-                    group.add(box);
+                // Services are no longer visual objects in the scene
+                // Instead, we'll add them as filter badges on kube-proxy instances
+                updateKubeProxyServiceFilters();
+            }
+            
+            function updateKubeProxyServiceFilters() {
+                // Update all kube-proxy instances with current services
+                clusterState.nodes.filter(n => n.type === 'worker').forEach(node => {
+                    if (!node.kubeProxy) return;
                     
-                    // Add port indicators on edges
-                    const portGeom = new THREE.SphereGeometry(0.2, 16, 16);
-                    const portMat = new THREE.MeshLambertMaterial({ 
-                        color: 0xFFFFFF,
-                        emissive: color,
-                        emissiveIntensity: 0.5
-                    });
-                    for (let i = 0; i < 4; i++) {
-                        const port = new THREE.Mesh(portGeom, portMat);
-                        const angle = (i / 4) * Math.PI * 2;
-                        port.position.set(Math.cos(angle) * 1.2, 0, Math.sin(angle) * 1.2);
-                        group.add(port);
+                    // Remove existing service filter badges
+                    if (node.kubeProxy.serviceFilters) {
+                        node.kubeProxy.serviceFilters.forEach(filter => {
+                            if (filter.label) {
+                                filter.label.element.remove();
+                                filter.label.parent?.remove(filter.label);
+                            }
+                            filter.parent?.remove(filter);
+                        });
                     }
-                    portalMesh = group;
-                } else if (serviceType === 'LoadBalancer') {
-                    // Cloud-like shape for LoadBalancer
-                    const group = new THREE.Group();
                     
-                    // Create cloud using multiple spheres
-                    const cloudMat = new THREE.MeshBasicMaterial({ 
-                        color, 
-                        transparent: true, 
-                        opacity: 0.8,
-                        side: THREE.DoubleSide 
+                    node.kubeProxy.serviceFilters = [];
+                    
+                    // Add service filter badges
+                    const services = Object.values(clusterState.services);
+                    services.forEach((srv, index) => {
+                        // Create filter badge group
+                        const filterGroup = new THREE.Group();
+                        
+                        // Filter icon (small plane with icon)
+                        const filterGeom = new THREE.PlaneGeometry(0.6, 0.3);
+                        const filterMat = new THREE.MeshBasicMaterial({
+                            color: 0x1976D2,
+                            transparent: true,
+                            opacity: 0.8,
+                            side: THREE.DoubleSide
+                        });
+                        const filterMesh = new THREE.Mesh(filterGeom, filterMat);
+                        filterGroup.add(filterMesh);
+                        
+                        // Add service name label
+                        const labelText = srv.type === 'NodePort' ? 
+                            `🔽 ${srv.name}:${srv.nodePort}` : 
+                            `🔽 ${srv.name}`;
+                        const label = createHtmlLabel(labelText, new THREE.Vector3(0, 0, 0.2));
+                        label.element.style.fontSize = '10px';
+                        label.element.style.padding = '2px 6px';
+                        label.element.style.backgroundColor = 'rgba(25, 118, 210, 0.9)';
+                        label.element.style.cursor = 'pointer';
+                        label.element.onclick = () => showServiceInspector(srv.id);
+                        filterGroup.add(label);
+                        filterGroup.label = label;
+                        
+                        // Position relative to kube-proxy
+                        filterGroup.position.set(1.2, -0.3 * index, 0);
+                        filterGroup.userData = { serviceId: srv.id, type: 'service-filter' };
+                        
+                        node.kubeProxy.add(filterGroup);
+                        node.kubeProxy.serviceFilters.push(filterGroup);
                     });
-                    
-                    const positions = [
-                        { x: 0, y: 0, z: 0, scale: 1.2 },
-                        { x: 0.8, y: 0, z: 0, scale: 1 },
-                        { x: -0.8, y: 0, z: 0, scale: 1 },
-                        { x: 0.4, y: 0, z: 0.7, scale: 0.9 },
-                        { x: -0.4, y: 0, z: 0.7, scale: 0.9 },
-                        { x: 0.4, y: 0, z: -0.7, scale: 0.9 },
-                        { x: -0.4, y: 0, z: -0.7, scale: 0.9 }
-                    ];
-                    
-                    positions.forEach(pos => {
-                        const sphere = new THREE.Mesh(
-                            new THREE.SphereGeometry(0.6 * pos.scale, 16, 16),
-                            cloudMat
-                        );
-                        sphere.position.set(pos.x, pos.y, pos.z);
-                        group.add(sphere);
-                    });
-                    
-                    // Add a glowing core
-                    const coreMat = new THREE.MeshLambertMaterial({ 
-                        color: 0xFFFFFF,
-                        emissive: color,
-                        emissiveIntensity: 0.7
-                    });
-                    const core = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 16), coreMat);
-                    group.add(core);
-                    
-                    portalMesh = group;
-                }
-                
-                portalMesh.userData = { id: srv.id, type: 'service' };
-                const labelText = srv.type === 'NodePort' ? 
-                    `${srv.name} :${srv.nodePort}` : 
-                    srv.name;
-                const label = createHtmlLabel(labelText, new THREE.Vector3(0, 1, 0));
-                portalMesh.add(label);
-                portalMesh.label = label;
-                scene.add(portalMesh);
-                threeObjects.set(`srv-${srv.id}`, portalMesh);
-                recalculateServicePosition(srv);
+                });
             }
             function repositionNodes() { 
                 const workers = clusterState.nodes.filter(n => n.type === 'worker'); 
@@ -1705,8 +1764,62 @@
                 }); 
             }
             function updateServiceVisuals() {
+                // Check if there are any LoadBalancer services
+                const hasLoadBalancerService = Object.values(clusterState.services)
+                    .some(srv => srv.type === 'LoadBalancer');
+                
+                // Update external load balancer visibility
+                const externalLb = threeObjects.get('external-lb');
+                if (externalLb) {
+                    externalLb.visible = hasLoadBalancerService;
+                    
+                    // Remove old connections
+                    if (externalLb.connections) {
+                        externalLb.connections.forEach(line => scene.remove(line));
+                        externalLb.connections = [];
+                    }
+                    
+                    // Create connections to all worker nodes if visible
+                    if (hasLoadBalancerService) {
+                        externalLb.connections = [];
+                        const lbPos = externalLb.position.clone();
+                        
+                        clusterState.nodes.filter(n => n.type === 'worker').forEach(node => {
+                            const nodeMesh = threeObjects.get(node.id);
+                            if (nodeMesh && node.kubeProxy) {
+                                const nodePos = new THREE.Vector3();
+                                node.kubeProxy.getWorldPosition(nodePos);
+                                
+                                // Create droopy cable connection
+                                const cable = new THREE.CatmullRomCurve3([
+                                    lbPos,
+                                    new THREE.Vector3(
+                                        (lbPos.x + nodePos.x) / 2,
+                                        Math.min(lbPos.y, nodePos.y) - 2, // Droop down
+                                        (lbPos.z + nodePos.z) / 2
+                                    ),
+                                    nodePos
+                                ]);
+                                
+                                const cablePoints = cable.getPoints(30);
+                                const lineGeom = new THREE.BufferGeometry().setFromPoints(cablePoints);
+                                const lineMat = new THREE.LineBasicMaterial({
+                                    color: 0x4285F4,
+                                    transparent: true,
+                                    opacity: 0.4,
+                                    linewidth: 3
+                                });
+                                const line = new THREE.Line(lineGeom, lineMat);
+                                line.userData.cable = cable; // Store the cable curve for particle animation
+                                line.userData.nodeId = node.id; // Store node reference
+                                scene.add(line);
+                                externalLb.connections.push(line);
+                            }
+                        });
+                    }
+                }
+                
                 Object.values(clusterState.services).forEach(srv => {
-                    const portalMesh = threeObjects.get(`srv-${srv.id}`); if (!portalMesh) return;
                     // Find pods that match the service's label selector
                     const matchingPods = Object.values(clusterState.pods).filter(pod => {
                         if (!pod.labels || !srv.selector) return false;
@@ -1714,10 +1827,6 @@
                     });
 
                     const podMeshes = matchingPods.map(pod => threeObjects.get(pod.id)).filter(Boolean);
-
-                    // Always show service, even if no pods match
-                    portalMesh.visible = srv.isVisible;
-                    if (portalMesh.label) portalMesh.label.visible = srv.isVisible;
 
                     // Update network lines
                     if (!srv.networkLines) srv.networkLines = [];
@@ -1727,154 +1836,54 @@
                     podMeshes.forEach(podMesh => {
                         const podPos = new THREE.Vector3();
                         podMesh.getWorldPosition(podPos);
-                        const points = [portalMesh.position, podPos];
-                        const lineGeom = new THREE.BufferGeometry().setFromPoints(points);
-                        // Get color from the service mesh (handle groups for NodePort/LoadBalancer)
-                        let lineColor = 0x00BCD4; // Default color
-                        if (portalMesh.material && portalMesh.material.color) {
-                            lineColor = portalMesh.material.color;
-                        } else if (portalMesh.children && portalMesh.children[0] && portalMesh.children[0].material) {
-                            lineColor = portalMesh.children[0].material.color;
-                        }
                         
-                        const lineMat = new THREE.LineBasicMaterial({
-                            color: lineColor,
-                            transparent: true,
-                            opacity: 0.4,
-                            linewidth: 2,
-                            depthTest: true,
-                            depthWrite: true
-                        });
-                        const line = new THREE.Line(lineGeom, lineMat);
-                        line.visible = srv.isVisible;
-                        line.renderOrder = 10;
-                        srv.networkLines.push(line);
-                        scene.add(line);
+                        // Only create kube-proxy to pod connections (no service visuals)
+                        const pod = Object.values(clusterState.pods).find(p => threeObjects.get(p.id) === podMesh);
+                        if (pod && pod.nodeId) {
+                            const node = clusterState.nodes.find(n => n.id === pod.nodeId);
+                            if (node && node.kubeProxy) {
+                                const kubeProxyPos = new THREE.Vector3();
+                                node.kubeProxy.getWorldPosition(kubeProxyPos);
+                                
+                                // Create droopy cable from kube-proxy to pod
+                                const kubeProxyToPodCable = new THREE.CatmullRomCurve3([
+                                    kubeProxyPos,
+                                    new THREE.Vector3(
+                                        (kubeProxyPos.x + podPos.x) / 2,
+                                        Math.min(kubeProxyPos.y, podPos.y) - 0.5, // Smaller droop for shorter distance
+                                        (kubeProxyPos.z + podPos.z) / 2
+                                    ),
+                                    podPos
+                                ]);
+                                
+                                const proxyPodCablePoints = kubeProxyToPodCable.getPoints(15);
+                                const proxyPodLineGeom = new THREE.BufferGeometry().setFromPoints(proxyPodCablePoints);
+                                const proxyPodLineMat = new THREE.LineBasicMaterial({
+                                    color: 0x00BCD4, // Cyan for kube-proxy connections
+                                    transparent: true,
+                                    opacity: 0.3,
+                                    linewidth: 2
+                                });
+                                const proxyPodLine = new THREE.Line(proxyPodLineGeom, proxyPodLineMat);
+                                proxyPodLine.userData.cable = kubeProxyToPodCable; // Store the cable curve
+                                proxyPodLine.userData.type = 'kubeproxy-to-pod';
+                                proxyPodLine.userData.podId = podMesh.userData.podId;
+                                proxyPodLine.userData.nodeId = node.id;
+                                proxyPodLine.visible = srv.isVisible;
+                                scene.add(proxyPodLine);
+                                srv.networkLines.push(proxyPodLine);
+                            }
+                        }
                     });
                 });
             }
             function recalculateServicePosition(srv) {
-                const portalMesh = threeObjects.get(`srv-${srv.id}`); if (!portalMesh || !srv.isVisible) return;
-                // Position service in the Network Plane
-                const networkPlaneY = CONFIG.PLANES.NETWORK.y;
-
-                // Find pods that match the service's label selector
-                const matchingPods = Object.values(clusterState.pods).filter(pod => {
-                    if (!pod.labels || !srv.selector) return false;
-                    return Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value);
-                });
-
-                if (matchingPods.length === 0) {
-                    // Default position if no matching pods
-                    portalMesh.position.set(0, networkPlaneY, -5);
-                    return;
-                }
-
-                // Calculate center position of matching pods
-                let centerX = 0, centerZ = 0;
-                matchingPods.forEach(pod => {
-                    const podMesh = threeObjects.get(pod.id);
-                    if (podMesh) {
-                        const worldPos = new THREE.Vector3();
-                        podMesh.getWorldPosition(worldPos);
-                        centerX += worldPos.x;
-                        centerZ += worldPos.z;
-                    }
-                });
-                centerX /= matchingPods.length;
-                centerZ /= matchingPods.length;
-
-                portalMesh.position.set(centerX, networkPlaneY, centerZ);
-                
-                // Check for overlaps with other services and adjust if needed
-                const serviceRadius = 2; // Minimum distance between services
-                Object.values(clusterState.services).forEach(otherSrv => {
-                    if (otherSrv.id === srv.id) return;
-                    const otherMesh = threeObjects.get(`srv-${otherSrv.id}`);
-                    if (!otherMesh) return;
-                    
-                    const distance = portalMesh.position.distanceTo(otherMesh.position);
-                    if (distance < serviceRadius) {
-                        // Offset this service to avoid overlap
-                        const offset = new THREE.Vector3()
-                            .subVectors(portalMesh.position, otherMesh.position)
-                            .normalize()
-                            .multiplyScalar(serviceRadius);
-                        portalMesh.position.add(offset);
-                    }
-                });
+                // No longer needed - services are not visual objects
             }
             function recalculateServicePositions() { 
-                const servicePositions = [];
-                
-                // First pass: calculate initial positions
-                Object.values(clusterState.services).forEach(srv => {
-                    const portalMesh = threeObjects.get(`srv-${srv.id}`);
-                    if (!portalMesh || !srv.isVisible) return;
-                    
-                    const networkPlaneY = CONFIG.PLANES.NETWORK.y;
-                    const matchingPods = Object.values(clusterState.pods).filter(pod => {
-                        if (!pod.labels || !srv.selector) return false;
-                        return Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value);
-                    });
-                    
-                    let targetPos;
-                    if (matchingPods.length === 0) {
-                        targetPos = new THREE.Vector3(0, networkPlaneY, -5);
-                    } else {
-                        let centerX = 0, centerZ = 0;
-                        matchingPods.forEach(pod => {
-                            const podMesh = threeObjects.get(pod.id);
-                            if (podMesh) {
-                                const worldPos = new THREE.Vector3();
-                                podMesh.getWorldPosition(worldPos);
-                                centerX += worldPos.x;
-                                centerZ += worldPos.z;
-                            }
-                        });
-                        centerX /= matchingPods.length;
-                        centerZ /= matchingPods.length;
-                        targetPos = new THREE.Vector3(centerX, networkPlaneY, centerZ);
-                    }
-                    
-                    servicePositions.push({
-                        id: srv.id,
-                        mesh: portalMesh,
-                        position: targetPos
-                    });
-                });
-                
-                // Second pass: resolve collisions
-                const serviceRadius = 3; // Minimum distance between services
-                for (let i = 0; i < servicePositions.length; i++) {
-                    for (let j = i + 1; j < servicePositions.length; j++) {
-                        const srv1 = servicePositions[i];
-                        const srv2 = servicePositions[j];
-                        
-                        const distance = srv1.position.distanceTo(srv2.position);
-                        if (distance < serviceRadius) {
-                            // Calculate repulsion vector
-                            const direction = new THREE.Vector3()
-                                .subVectors(srv2.position, srv1.position);
-                            
-                            if (direction.length() === 0) {
-                                // Handle identical positions
-                                direction.set(Math.random() - 0.5, 0, Math.random() - 0.5);
-                            }
-                            direction.normalize();
-                            
-                            // Move services apart
-                            const moveDistance = (serviceRadius - distance) / 2;
-                            srv1.position.sub(direction.clone().multiplyScalar(moveDistance));
-                            srv2.position.add(direction.multiplyScalar(moveDistance));
-                        }
-                    }
-                }
-                
-                // Apply final positions
-                servicePositions.forEach(srv => {
-                    srv.mesh.position.copy(srv.position);
-                });
+                // No longer needed - services are not visual objects
+                updateServiceVisuals();
+                updateKubeProxyServiceFilters();
             }
             function animate() {
                 requestAnimationFrame(animate); if (clusterState.isPaused) return; const time = Date.now() * 0.001; const masterNode = clusterState.nodes.find(n => n.type === 'master'); if (masterNode?.coreMesh) {
@@ -1994,7 +2003,7 @@
             }
             function onPointerDown(event) { if (event.button !== 0 || currentTool !== 'select') return; hasDragged = false; const intersects = getIntersects(event); if (intersects.length > 0) { const obj = intersects.find(i => i.object.userData.type === 'pod')?.object; if (obj) { draggedPod = obj; originalPodState = { position: draggedPod.position.clone(), parent: draggedPod.parent }; controls.enabled = false; } } }
             function onPointerMove(event) { if (!draggedPod) return; if (!hasDragged) { hasDragged = true; document.body.style.cursor = 'grabbing'; const worldPos = new THREE.Vector3(); draggedPod.getWorldPosition(worldPos); scene.attach(draggedPod); draggedPod.position.copy(worldPos); } const intersects = getIntersects(event); const planeIntersect = intersects.find(i => i.object.userData.type === 'node'); if (planeIntersect) draggedPod.position.set(planeIntersect.point.x, draggedPod.position.y, planeIntersect.point.z); else { const pos = new THREE.Vector3(); raycaster.ray.at(10, pos); draggedPod.position.copy(pos); } }
-            function onPointerUp(event) { if (currentTool !== 'select') return; if (draggedPod) { if (hasDragged) { const intersects = getIntersects(event); const dropTarget = intersects.find(i => i.object.userData.type === 'node' && i.object.userData.id !== originalPodState.parent.userData.id)?.object; if (dropTarget) { const pod = clusterState.pods[draggedPod.userData.id]; const targetNode = clusterState.nodes.find(n => n.id === dropTarget.userData.id); if (targetNode.cpu.usage + pod.cpuRequest <= targetNode.cpu.capacity && targetNode.memory.usage + pod.memRequest <= targetNode.memory.capacity) { const oldNode = clusterState.nodes.find(n => n.id === pod.nodeId); oldNode.pods.delete(pod.id); recalculateNodeResources(oldNode); pod.nodeId = targetNode.id; targetNode.pods.add(pod.id); recalculateNodeResources(targetNode); dropTarget.add(draggedPod); repositionPodInNode(draggedPod, targetNode); logEvent(`Pod ${pod.name} moved to Node ${targetNode.name}.`); } else { logEvent(`Node ${targetNode.name} lacks resources for Pod ${pod.name}.`, 'WARN'); originalPodState.parent.add(draggedPod); repositionPodInNode(draggedPod, originalPodState.parent); } } else { originalPodState.parent.add(draggedPod); draggedPod.position.copy(originalPodState.position); } renderHierarchy(); updateDeploymentList(); draggedPod = null; controls.enabled = true; return; } else if (!hasDragged) { draggedPod = null; controls.enabled = true; } } const intersects = getIntersects(event); Object.values(clusterState.deployments).forEach(d => { const box = threeObjects.get(`dep-${d.id}`); if (box) box.material.emissiveIntensity = 0; }); clusterState.selectedServiceId = null; if (intersects.length > 0) { let obj = intersects.find(i => i.object.userData.id)?.object; if (obj) { if (obj.parent?.userData.type === 'node') obj = obj.parent; } if (obj?.userData.id) { const { id, type } = obj.userData; if (type === 'node') showNodeInspector(id); if (type === 'pod') showPodInspector(id); if (type === 'deployment') showDeploymentInspector(id); if (type === 'service') { showServiceInspector(id); clusterState.selectedServiceId = id; } } } else { hideInspector(); } }
+            function onPointerUp(event) { if (currentTool !== 'select') return; if (draggedPod) { if (hasDragged) { const intersects = getIntersects(event); const dropTarget = intersects.find(i => i.object.userData.type === 'node' && i.object.userData.id !== originalPodState.parent.userData.id)?.object; if (dropTarget) { const pod = clusterState.pods[draggedPod.userData.id]; const targetNode = clusterState.nodes.find(n => n.id === dropTarget.userData.id); if (targetNode.cpu.usage + pod.cpuRequest <= targetNode.cpu.capacity && targetNode.memory.usage + pod.memRequest <= targetNode.memory.capacity) { const oldNode = clusterState.nodes.find(n => n.id === pod.nodeId); oldNode.pods.delete(pod.id); recalculateNodeResources(oldNode); pod.nodeId = targetNode.id; targetNode.pods.add(pod.id); recalculateNodeResources(targetNode); dropTarget.add(draggedPod); repositionPodInNode(draggedPod, targetNode); logEvent(`Pod ${pod.name} moved to Node ${targetNode.name}.`); } else { logEvent(`Node ${targetNode.name} lacks resources for Pod ${pod.name}.`, 'WARN'); originalPodState.parent.add(draggedPod); repositionPodInNode(draggedPod, originalPodState.parent); } } else { originalPodState.parent.add(draggedPod); draggedPod.position.copy(originalPodState.position); } renderHierarchy(); updateDeploymentList(); draggedPod = null; controls.enabled = true; return; } else if (!hasDragged) { draggedPod = null; controls.enabled = true; } } const intersects = getIntersects(event); Object.values(clusterState.deployments).forEach(d => { const box = threeObjects.get(`dep-${d.id}`); if (box) box.material.emissiveIntensity = 0; }); clusterState.selectedServiceId = null; if (intersects.length > 0) { let obj = intersects.find(i => i.object.userData.id || i.object.userData.serviceId)?.object; if (obj) { if (obj.parent?.userData.type === 'node') obj = obj.parent; } if (obj?.userData) { const { id, type, serviceId } = obj.userData; if (type === 'node' && id) showNodeInspector(id); if (type === 'pod' && id) showPodInspector(id); if (type === 'deployment' && id) showDeploymentInspector(id); if (type === 'service-filter' && serviceId) { showServiceInspector(serviceId); clusterState.selectedServiceId = serviceId; } } } else { hideInspector(); } }
             function getIntersects(event) { const canvasBounds = renderer.domElement.getBoundingClientRect(); mouse.x = ((event.clientX - canvasBounds.left) / canvasBounds.width) * 2 - 1; mouse.y = -((event.clientY - canvasBounds.top) / canvasBounds.height) * 2 + 1; raycaster.setFromCamera(mouse, camera); return raycaster.intersectObjects(scene.children, true); }
             function repositionPodInNode(podMesh, nodeMesh) { const pod = clusterState.pods[podMesh.userData.id]; const node = clusterState.nodes.find(n => n.id === nodeMesh.userData.id); const podSize = .5 + (pod.cpuRequest + pod.memRequest) * CONFIG.POD_SCALE_FACTOR; const nodeBoxSize = new THREE.Vector3(); new THREE.Box3().setFromObject(nodeMesh).getSize(nodeBoxSize); const podSpacing = podSize * 1.2; const podsPerRow = Math.floor(nodeBoxSize.x / podSpacing); const podIndexOnNode = Array.from(node.pods).indexOf(pod.id); const col = podIndexOnNode % podsPerRow; const row = Math.floor(podIndexOnNode / podsPerRow); const newPos = new THREE.Vector3(-nodeBoxSize.x / 2 + (col * podSpacing) + podSpacing / 2, -nodeBoxSize.y / 2 + podSize / 2, -nodeBoxSize.z / 2 + (row * podSpacing) + podSpacing / 2); new TWEEN.Tween(podMesh.position).to(newPos, 300).easing(TWEEN.Easing.Quadratic.Out).start(); }
             function recalculateNodeResources(node) { node.cpu.usage = 0; node.memory.usage = 0; node.pods.forEach(id => { const p = clusterState.pods[id]; if (p) { node.cpu.usage += p.cpuRequest; node.memory.usage += p.memRequest; } }); }
@@ -2134,12 +2143,17 @@
                     select.appendChild(option);
                 } else {
                     // Sort labels and add them as options
-                    Array.from(labelSet).sort().forEach(label => {
+                    const sortedLabels = Array.from(labelSet).sort();
+                    sortedLabels.forEach((label, index) => {
                         const option = document.createElement('option');
                         option.value = label;
                         option.textContent = label;
                         // Restore previous selections
                         if (currentSelections.includes(label)) {
+                            option.selected = true;
+                        }
+                        // If no selections exist, select the first option
+                        else if (currentSelections.length === 0 && index === 0) {
                             option.selected = true;
                         }
                         select.appendChild(option);
@@ -2458,61 +2472,6 @@
                 updateLayout();
             }
             
-            // Label mapping system
-            const labelMappings = {
-                // UI Elements
-                'Cluster Explorer': 'System Overview',
-                'Resource Pool': 'Available Resources',
-                'Hierarchy': 'System Structure',
-                'Inspector': 'Details Panel',
-                'Event Log': 'Activity Monitor',
-                
-                // Main concepts
-                'Control Plane': 'Cluster Brain',
-                'Data Plane': 'Workload Layer',
-                'Network Plane': 'Traffic Layer',
-                'Master Node': 'Management Server',
-                'Worker Node': 'Application Server',
-                
-                // Objects
-                'Pod': 'Container Instance',
-                'Deployment': 'Container Manager',
-                'Service': 'Traffic Router',
-                'Container': 'App Package',
-                
-                // Service types
-                'ClusterIP': 'Internal Only',
-                'NodePort': 'Direct Access',
-                'LoadBalancer': 'Managed External',
-                
-                // Control plane components
-                'API Server': 'Command Center',
-                'etcd': 'Cluster Database',
-                'Scheduler': 'Placement Engine',
-                'Controller Manager': 'Automation Hub',
-                'kube-proxy': 'Network Router',
-                
-                // Actions
-                'Create Deployment': 'Create Container Manager',
-                'Create Service': 'Create Traffic Router',
-                'Add Worker': 'Add Server',
-                'Remove Worker': 'Remove Server',
-                'Scale': 'Adjust Copies',
-                'Kill Pod': 'Stop Instance',
-                'Simulate Failure': 'Test Failure',
-                
-                // Descriptions
-                'Label Selector': 'Container Instance Tags',
-                'Service Name': 'Name',
-                'Service Type': 'Routing Type',
-                'Replicas': 'Copies',
-                'Matching Pods': 'Matching Container Instances',
-                'Active Deployments': 'Active Container Managers',
-                'Active Services': 'Active Traffic Routers',
-                'Nodes': 'Servers',
-                'Deployments': 'Container Managers',
-                'Services': 'Traffic Routers'
-            };
             
             // Tooltip descriptions
             const tooltipDescriptions = {
@@ -2534,7 +2493,6 @@
                 'Managed External': 'Cloud provider handles external traffic distribution'
             };
             
-            let useIntuitive = false;
             const tooltips = new Map();
             
             // Toggle label mode
@@ -2542,14 +2500,6 @@
                 useIntuitive = !useIntuitive;
                 updateAllLabels();
                 logEvent(`Switched to ${useIntuitive ? 'intuitive' : 'Kubernetes'} terminology`, 'INFO');
-            }
-            
-            // Get appropriate label
-            function getLabel(k8sLabel) {
-                if (useIntuitive && labelMappings[k8sLabel]) {
-                    return labelMappings[k8sLabel];
-                }
-                return k8sLabel;
             }
             
             // Update all visible labels
@@ -2584,6 +2534,68 @@
                 renderHierarchy();
                 updateDeploymentList();
                 updateServiceList();
+                
+                // Update Three.js labels
+                updateThreeJsLabels();
+            }
+            
+            // Update Three.js labels
+            function updateThreeJsLabels() {
+                // Update control plane component labels
+                clusterState.nodes.forEach(node => {
+                    if (node.type === 'master' && node.componentOrbs) {
+                        const components = [
+                            { key: 'API Server' },
+                            { key: 'etcd' },
+                            { key: 'Scheduler' },
+                            { key: 'Controller Manager' }
+                        ];
+                        
+                        node.componentOrbs.forEach((orb, index) => {
+                            if (orb.label && components[index]) {
+                                orb.label.element.textContent = getLabel(components[index].key);
+                            }
+                        });
+                    }
+                    
+                    // Update kube-proxy labels on worker nodes
+                    if (node.type === 'worker' && node.kubeProxy && node.kubeProxy.label) {
+                        node.kubeProxy.label.element.textContent = getLabel('kube-proxy');
+                    }
+                });
+                
+                // Update plane labels
+                ['NETWORK', 'CONTROL', 'DATA'].forEach(planeName => {
+                    const planeMesh = threeObjects.get(`plane-${planeName}`);
+                    if (planeMesh && planeMesh.label) {
+                        planeMesh.label.element.textContent = getLabel(CONFIG.PLANES[planeName].label);
+                    }
+                });
+                
+                // Update master node "Control Plane" label
+                clusterState.nodes.forEach(node => {
+                    if (node.type === 'master') {
+                        const nodeMesh = threeObjects.get(node.id);
+                        if (nodeMesh && nodeMesh.children) {
+                            nodeMesh.children.forEach(child => {
+                                if (child.isCSS2DObject && child.element.textContent.includes('Control Plane') || 
+                                    child.element.textContent.includes('Cluster Brain')) {
+                                    child.element.textContent = getLabel('Control Plane');
+                                }
+                            });
+                        }
+                    }
+                });
+                
+                // Update external load balancer label
+                const externalLb = threeObjects.get('external-lb');
+                if (externalLb && externalLb.children) {
+                    externalLb.children.forEach(child => {
+                        if (child.isCSS2DObject) {
+                            child.element.textContent = getLabel('Load Balancer') + ' (External)';
+                        }
+                    });
+                }
             }
             
             // Create tooltip element
