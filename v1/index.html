@@ -333,6 +333,19 @@
             cursor: pointer;
             user-select: none;
         }
+        
+        .tree-trash {
+            cursor: pointer;
+            user-select: none;
+            margin-left: 8px;
+            font-size: 14px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        
+        .tree-trash:hover {
+            opacity: 1;
+        }
 
         .tree-swivel {
             width: 1em;
@@ -795,26 +808,37 @@
 
             function getNextId() { return clusterState.nextId++; }
             function addNode(type, name) { if (clusterState.nodes.length >= 101) { logEvent('Cluster at maximum node capacity (100 workers).', 'WARN'); return; } const id = getNextId(); const node = { id, type, name: name || `${type}-node-${id}`, pods: new Set(), cpu: { usage: 0 }, memory: { usage: 0 }, isFailing: false, isVisible: true }; if (type === 'worker') { node.cpu.capacity = 4000; node.memory.capacity = 8192; } clusterState.nodes.push(node); createNodeVisual(node); logEvent(`${node.name} (${type}) is online.`); updateClusterOverview(); renderHierarchy(); }
-            function removeLastWorkerNode() { 
-                const workers = clusterState.nodes.filter(n => n.type === 'worker'); 
-                if (workers.length === 0) { 
-                    logEvent('No worker nodes to remove.', 'WARN'); 
-                    return; 
-                } 
-                const nodeToRemove = workers[workers.length - 1]; 
-                failNode(nodeToRemove.id, true); 
-                setTimeout(() => { 
-                    clusterState.nodes = clusterState.nodes.filter(n => n.id !== nodeToRemove.id); 
-                    const mesh = threeObjects.get(nodeToRemove.id); 
-                    if (mesh) { 
-                        scene.remove(mesh); 
-                        threeObjects.delete(nodeToRemove.id); 
-                    } 
-                    logEvent(`${nodeToRemove.name} fully decommissioned.`); 
-                    updateClusterOverview(); 
-                    repositionNodes(); 
-                    renderHierarchy(); 
-                }, 3e3); 
+            function removeWorkerNode(nodeId) {
+                const node = nodeId ? 
+                    clusterState.nodes.find(n => n.id === nodeId && n.type === 'worker') :
+                    [...clusterState.nodes].reverse().find(n => n.type === 'worker');
+                    
+                if (!node) return;
+                
+                // Evacuate pods first
+                failNode(node.id, true);
+                
+                // Remove node
+                const nodeIndex = clusterState.nodes.indexOf(node);
+                clusterState.nodes.splice(nodeIndex, 1);
+                
+                // Remove visual
+                const nodeMesh = threeObjects.get(node.id);
+                if (nodeMesh) {
+                    scene.remove(nodeMesh);
+                    threeObjects.delete(node.id);
+                }
+                
+                repositionNodes();
+                updateResourcePoolView();
+                renderHierarchy();
+                updateNodePortIndicators();
+                
+                logEvent(`Worker node ${node.name} removed.`);
+            }
+            
+            function removeLastWorkerNode() {
+                removeWorkerNode();
             }
             function createDeployment() { const option = document.getElementById('image-select').selectedOptions[0]; const depId = getNextId(); const newDep = { id: depId, name: `${option.value}-deployment-${depId}`, replicas: parseInt(document.getElementById('replica-slider').value, 10), image: option.value, cpuRequest: parseInt(option.dataset.cpu), memRequest: parseInt(option.dataset.mem), podIds: new Set(), isVisible: true }; clusterState.deployments[newDep.id] = newDep; logEvent(`Deployment '${newDep.name}' created. Goal: ${newDep.replicas} replicas.`); updateDeploymentList(); renderHierarchy(); }
             function createService() {
@@ -848,6 +872,7 @@
                 };
                 clusterState.services[srvId] = newSrv;
                 createServiceVisual(newSrv);
+                updateNodePortIndicators(); // Update port indicators on nodes
                 const selectorStr = Object.entries(selector).map(([k, v]) => `${k}=${v}`).join(', ');
                 logEvent(`${serviceType} Service '${newSrv.name}' created with selector: ${selectorStr}`);
                 updateServiceList();
@@ -859,16 +884,359 @@
             function failNode(nodeId, isRemoval = false) { const node = clusterState.nodes.find(n => n.id === nodeId); if (!node || node.type === 'master') return; node.isFailing = true; const nodeMesh = threeObjects.get(nodeId); if (nodeMesh) nodeMesh.material.color.set(CONFIG.COLORS.POD_FAILED); logEvent(`Worker Node ${node.name} is failing! Evacuating pods...`, 'ERROR'); Array.from(node.pods).forEach(podId => { const pod = clusterState.pods[podId]; if (!pod) return; pod.status = 'Pending'; pod.nodeId = null; const podMesh = threeObjects.get(podId); if (podMesh) { const worldPos = new THREE.Vector3(); podMesh.getWorldPosition(worldPos); scene.attach(podMesh); podMesh.position.copy(worldPos); podMesh.material.color.set(CONFIG.COLORS.POD_PENDING); } }); node.pods.clear(); recalculateNodeResources(node); renderHierarchy(); if (isRemoval) return; setTimeout(() => { node.isFailing = false; if (nodeMesh) nodeMesh.material.color.set(CONFIG.COLORS.WORKER_NODE); logEvent(`Worker Node ${node.name} has recovered.`); updateResourcePoolView(); }, 1e4); }
             function killPod(podId) { const pod = clusterState.pods[podId]; if (!pod) return; pod.status = 'Failed'; const podMesh = threeObjects.get(podId); if (podMesh) podMesh.material.color.set(CONFIG.COLORS.POD_FAILED); logEvent(`Pod ${pod.name} killed! Control Plane will replace it.`, 'WARN'); setTimeout(() => { if (clusterState.pods[podId]?.status === 'Failed') terminatePod(podId, "cleaned up"); }, 2e3); }
             function findSchedulableNode(cpu, mem) { return clusterState.nodes.find(n => n.type === 'worker' && !n.isFailing && (n.cpu.usage + cpu <= n.cpu.capacity) && (n.memory.usage + mem <= n.memory.capacity)); }
+            function deleteDeployment(deploymentId) {
+                const dep = clusterState.deployments[deploymentId];
+                if (!dep) return;
+                
+                // Delete all pods belonging to this deployment
+                Array.from(dep.podIds).forEach(podId => {
+                    terminatePod(podId, 'deployment deleted');
+                });
+                
+                // Remove deployment visual
+                const depMesh = threeObjects.get(`dep-${dep.id}`);
+                if (depMesh) {
+                    scene.remove(depMesh);
+                    threeObjects.delete(`dep-${dep.id}`);
+                }
+                
+                // Remove from state
+                delete clusterState.deployments[deploymentId];
+                
+                // Update UI
+                updateDeploymentList();
+                renderHierarchy();
+                hideInspector();
+                
+                logEvent(`Deployment ${dep.name} deleted.`, 'INFO');
+            }
+            
+            function deleteService(serviceId) {
+                const srv = clusterState.services[serviceId];
+                if (!srv) return;
+                
+                // Remove visual
+                const serviceMesh = threeObjects.get(`srv-${srv.id}`);
+                if (serviceMesh) {
+                    scene.remove(serviceMesh);
+                    threeObjects.delete(`srv-${srv.id}`);
+                }
+                
+                // Remove from state
+                delete clusterState.services[serviceId];
+                
+                // Update UI
+                recalculateServicePositions();
+                updateServiceList();
+                updateNodePortIndicators(); // Remove port indicators if NodePort
+                renderHierarchy();
+                hideInspector();
+                
+                logEvent(`Service ${srv.name} deleted.`, 'INFO');
+            }
+            
             function simulateTraffic(serviceId) {
-                const srv = clusterState.services[serviceId]; if (!srv) return; const portalMesh = threeObjects.get(`srv-${srv.id}`);
+                console.log('simulateTraffic called for service:', serviceId);
+                const srv = clusterState.services[serviceId]; 
+                if (!srv) return; 
+                
+                const serviceMesh = threeObjects.get(`srv-${srv.id}`);
+                if (!serviceMesh) return;
+                
                 // Find pods that match the service's label selector
                 const matchingPods = Object.values(clusterState.pods).filter(pod => {
-                    if (!pod.labels || !srv.selector) return false;
+                    if (!pod.labels || !srv.selector || pod.status !== 'Running') return false;
                     return Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value);
                 });
-                const podMeshes = matchingPods.map(pod => threeObjects.get(pod.id)).filter(Boolean);
-                if (podMeshes.length === 0) return;
-                for (let i = 0; i < 10; i++) { const particle = new THREE.Mesh(new THREE.SphereGeometry(.2, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff })); const targetPod = podMeshes[Math.floor(Math.random() * podMeshes.length)]; const podPos = new THREE.Vector3(); targetPod.getWorldPosition(podPos); const path = new THREE.CatmullRomCurve3([userIcon.position, portalMesh.position, podPos]); particle.position.copy(userIcon.position); scene.add(particle); new TWEEN.Tween({ t: 0 }).to({ t: 1 }, 1500 + Math.random() * 500).easing(TWEEN.Easing.Quadratic.InOut).onUpdate(({ t }) => { path.getPointAt(t, particle.position); }).onComplete(() => { scene.remove(particle); }).delay(i * 100).start(); }
+                
+                if (matchingPods.length === 0) {
+                    logEvent(`No running pods match service ${srv.name}`, 'WARN');
+                    return;
+                }
+                
+                // Select a random pod for this request (simulating load balancing)
+                const targetPod = matchingPods[Math.floor(Math.random() * matchingPods.length)];
+                const targetPodMesh = threeObjects.get(targetPod.id);
+                if (!targetPodMesh) return;
+                
+                const targetNode = clusterState.nodes.find(n => n.id === targetPod.nodeId);
+                if (!targetNode) return;
+                
+                // Get positions
+                const podPos = new THREE.Vector3();
+                targetPodMesh.getWorldPosition(podPos);
+                
+                const servicePos = serviceMesh.position.clone();
+                
+                // Determine traffic source and path based on service type
+                let sourcePos;
+                let sourceName;
+                let entryNodeMesh = null;
+                let entryNodePos = null;
+                
+                if (srv.type === 'ClusterIP' || !srv.type) {
+                    // Internal traffic from another pod
+                    const otherPods = Object.values(clusterState.pods).filter(p => p.id !== targetPod.id && p.status === 'Running');
+                    if (otherPods.length > 0) {
+                        const sourcePod = otherPods[Math.floor(Math.random() * otherPods.length)];
+                        const sourcePodMesh = threeObjects.get(sourcePod.id);
+                        if (sourcePodMesh) {
+                            sourcePos = new THREE.Vector3();
+                            sourcePodMesh.getWorldPosition(sourcePos);
+                            sourceName = sourcePod.name;
+                        }
+                    }
+                } else if (srv.type === 'NodePort') {
+                    // External traffic enters through a random node's NodePort
+                    const internetMesh = threeObjects.get('internet');
+                    if (internetMesh) {
+                        sourcePos = internetMesh.position.clone();
+                        sourceName = 'Internet';
+                        
+                        // Pick a random node as entry point
+                        const workerNodes = clusterState.nodes.filter(n => n.type === 'worker');
+                        if (workerNodes.length > 0) {
+                            const entryNode = workerNodes[Math.floor(Math.random() * workerNodes.length)];
+                            entryNodeMesh = threeObjects.get(entryNode.id);
+                            if (entryNodeMesh) {
+                                entryNodePos = new THREE.Vector3();
+                                entryNodeMesh.getWorldPosition(entryNodePos);
+                                entryNodePos.y += 2; // Position above the node
+                                logEvent(`External traffic entering through ${entryNode.name}:${srv.nodePort}`, 'INFO');
+                            }
+                        }
+                    }
+                } else if (srv.type === 'LoadBalancer') {
+                    // External traffic through cloud load balancer
+                    const internetMesh = threeObjects.get('internet');
+                    if (internetMesh) {
+                        sourcePos = internetMesh.position.clone();
+                        sourceName = 'Internet';
+                        
+                        // Create temporary cloud LB visualization if not exists
+                        let cloudLbMesh = threeObjects.get(`cloud-lb-${srv.id}`);
+                        if (!cloudLbMesh) {
+                            const lbGroup = new THREE.Group();
+                            const lbMat = new THREE.MeshBasicMaterial({ 
+                                color: 0x4285F4, // Google Cloud blue
+                                transparent: true,
+                                opacity: 0.8
+                            });
+                            
+                            // Create cloud icon
+                            const cloudGeom = new THREE.SphereGeometry(1, 16, 16);
+                            const cloud = new THREE.Mesh(cloudGeom, lbMat);
+                            cloud.scale.set(1.5, 0.8, 1);
+                            lbGroup.add(cloud);
+                            
+                            // Add LB icon
+                            const iconGeom = new THREE.BoxGeometry(0.6, 0.6, 0.1);
+                            const iconMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+                            const icon = new THREE.Mesh(iconGeom, iconMat);
+                            icon.position.z = 0.5;
+                            lbGroup.add(icon);
+                            
+                            // Position between internet and service
+                            const internetPos = internetMesh.position.clone();
+                            lbGroup.position.lerpVectors(internetPos, servicePos, 0.5);
+                            lbGroup.position.y = internetPos.y - 3;
+                            
+                            scene.add(lbGroup);
+                            threeObjects.set(`cloud-lb-${srv.id}`, lbGroup);
+                            cloudLbMesh = lbGroup;
+                            
+                            // Remove after animation completes
+                            setTimeout(() => {
+                                scene.remove(lbGroup);
+                                threeObjects.delete(`cloud-lb-${srv.id}`);
+                            }, 5000);
+                        }
+                        
+                        entryNodePos = cloudLbMesh.position.clone();
+                    }
+                }
+                
+                if (!sourcePos) return;
+                
+                // Get kube-proxy position for the target node
+                let kubeProxyPos;
+                if (targetNode.kubeProxy) {
+                    kubeProxyPos = new THREE.Vector3();
+                    targetNode.kubeProxy.getWorldPosition(kubeProxyPos);
+                }
+                
+                // Log the routing decision
+                const routePath = srv.type === 'NodePort' ? 
+                    `${sourceName} → Node:${srv.nodePort} → ${srv.name} → ${targetNode.name}/${targetPod.name}` :
+                    srv.type === 'LoadBalancer' ?
+                    `${sourceName} → Cloud LB → ${srv.name} → ${targetNode.name}/${targetPod.name}` :
+                    `${sourceName} → ${srv.name} → ${targetNode.name}/${targetPod.name}`;
+                logEvent(routePath, 'INFO');
+                
+                // Animate kube-proxy glow
+                if (targetNode.kubeProxy) {
+                    const originalIntensity = targetNode.kubeProxy.material.emissiveIntensity;
+                    const originalScale = targetNode.kubeProxy.scale.x;
+                    
+                    // Glow and scale animation
+                    new TWEEN.Tween(targetNode.kubeProxy.material)
+                        .to({ emissiveIntensity: 1.0 }, 200)
+                        .chain(new TWEEN.Tween(targetNode.kubeProxy.material)
+                            .to({ emissiveIntensity: originalIntensity }, 200))
+                        .start();
+                        
+                    new TWEEN.Tween(targetNode.kubeProxy.scale)
+                        .to({ x: originalScale * 1.2, y: originalScale * 1.2, z: originalScale * 1.2 }, 200)
+                        .chain(new TWEEN.Tween(targetNode.kubeProxy.scale)
+                            .to({ x: originalScale, y: originalScale, z: originalScale }, 200))
+                        .start();
+                }
+                
+                // Animate service mesh
+                if (serviceMesh) {
+                    const serviceGlow = serviceMesh.children?.[0] || serviceMesh;
+                    if (serviceGlow.material) {
+                        const origOpacity = serviceGlow.material.opacity || 1;
+                        new TWEEN.Tween(serviceGlow.material)
+                            .to({ opacity: 1 }, 300)
+                            .chain(new TWEEN.Tween(serviceGlow.material)
+                                .to({ opacity: origOpacity }, 300))
+                            .start();
+                    }
+                }
+                
+                // Create the path for request based on service type
+                const pathPoints = [sourcePos];
+                
+                // Add entry point for external traffic
+                if (entryNodePos) {
+                    pathPoints.push(entryNodePos);
+                }
+                
+                // Add service position
+                pathPoints.push(servicePos);
+                
+                // Add kube-proxy if available
+                if (kubeProxyPos) {
+                    pathPoints.push(kubeProxyPos);
+                }
+                
+                // Add final destination
+                pathPoints.push(podPos);
+                
+                const requestPath = new THREE.CatmullRomCurve3(pathPoints);
+                
+                // Create a single larger, more visible request particle
+                const requestGeom = new THREE.SphereGeometry(0.4, 32, 32);
+                const requestMat = new THREE.MeshPhongMaterial({ 
+                    color: 0x00FF00,
+                    emissive: 0x00FF00,
+                    emissiveIntensity: 0.8,
+                    shininess: 100
+                });
+                const requestParticle = new THREE.Mesh(requestGeom, requestMat);
+                requestParticle.position.copy(sourcePos);
+                scene.add(requestParticle);
+                
+                // Add a glowing aura
+                const auraGeom = new THREE.SphereGeometry(0.6, 32, 32);
+                const auraMat = new THREE.MeshBasicMaterial({
+                    color: 0x00FF00,
+                    transparent: true,
+                    opacity: 0.3
+                });
+                const aura = new THREE.Mesh(auraGeom, auraMat);
+                requestParticle.add(aura);
+                
+                // Animate request particle along path
+                const requestTween = new TWEEN.Tween({ t: 0 })
+                    .to({ t: 1 }, 4000)
+                    .easing(TWEEN.Easing.Quadratic.InOut)
+                    .onUpdate(({ t }) => {
+                        requestPath.getPointAt(t, requestParticle.position);
+                        // Pulse effect
+                        const scale = 1 + Math.sin(t * Math.PI * 8) * 0.3;
+                        requestParticle.scale.setScalar(scale);
+                        aura.scale.setScalar(1.5 * scale);
+                        
+                        // Update aura opacity
+                        auraMat.opacity = 0.3 + Math.sin(t * Math.PI * 8) * 0.2;
+                    })
+                    .onComplete(() => {
+                        scene.remove(requestParticle);
+                        
+                        // Animate target pod
+                        if (targetPodMesh && targetPodMesh.material) {
+                            const origEmissive = targetPodMesh.material.emissiveIntensity || 0;
+                            targetPodMesh.material.emissive = new THREE.Color(0x00FF00);
+                            new TWEEN.Tween(targetPodMesh.material)
+                                .to({ emissiveIntensity: 0.5 }, 300)
+                                .chain(new TWEEN.Tween(targetPodMesh.material)
+                                    .to({ emissiveIntensity: origEmissive }, 300))
+                                .start();
+                        }
+                        
+                        // Create response particle
+                        const responseGeom = new THREE.SphereGeometry(0.4, 32, 32);
+                        const responseMat = new THREE.MeshPhongMaterial({ 
+                            color: 0x2196F3,
+                            emissive: 0x2196F3,
+                            emissiveIntensity: 0.8,
+                            shininess: 100
+                        });
+                        const responseParticle = new THREE.Mesh(responseGeom, responseMat);
+                        responseParticle.position.copy(podPos);
+                        scene.add(responseParticle);
+                        
+                        // Add response aura
+                        const respAuraGeom = new THREE.SphereGeometry(0.6, 32, 32);
+                        const respAuraMat = new THREE.MeshBasicMaterial({
+                            color: 0x2196F3,
+                            transparent: true,
+                            opacity: 0.3
+                        });
+                        const respAura = new THREE.Mesh(respAuraGeom, respAuraMat);
+                        responseParticle.add(respAura);
+                        
+                        // Animate response back
+                        new TWEEN.Tween({ t: 0 })
+                            .to({ t: 1 }, 3000)
+                            .easing(TWEEN.Easing.Quadratic.InOut)
+                            .onUpdate(({ t }) => {
+                                // Reverse path for response
+                                requestPath.getPointAt(1 - t, responseParticle.position);
+                                const scale = 1 + Math.sin(t * Math.PI * 8) * 0.3;
+                                responseParticle.scale.setScalar(scale);
+                                respAura.scale.setScalar(1.5 * scale);
+                                respAuraMat.opacity = 0.3 + Math.sin(t * Math.PI * 8) * 0.2;
+                            })
+                            .onComplete(() => {
+                                scene.remove(responseParticle);
+                                logEvent(`Response sent back to ${sourceName}`, 'INFO');
+                            })
+                            .start();
+                    })
+                    .start();
+                
+                // Add glowing line effect along the path
+                const linePoints = requestPath.getPoints(50);
+                const lineGeom = new THREE.BufferGeometry().setFromPoints(linePoints);
+                const lineMat = new THREE.LineBasicMaterial({
+                    color: 0x00FF00,
+                    transparent: true,
+                    opacity: 0.3,
+                    linewidth: 2
+                });
+                const pathLine = new THREE.Line(lineGeom, lineMat);
+                scene.add(pathLine);
+                
+                // Fade out the line
+                new TWEEN.Tween(lineMat)
+                    .to({ opacity: 0 }, 4000)
+                    .onComplete(() => {
+                        scene.remove(pathLine);
+                    })
+                    .start();
             }
             function createUserIcon() { const loader = new THREE.TextureLoader(); loader.load('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0wIDNjMS42NiAwIDMgMS4zNCAzIDNzLTEuMzQgMy0zIDMtMy0xLjM0LTMtMyAxLjM0LTMgMy0zem0wIDE0LjJjLTIuNSAwLTQuNzEtMS4yOC02LTIuMjIuMDMtMS45OSA0LTMuMDggNi0zLjA4czUuOTcgMS4wOSA2IDMuMDhjLTEuMjkgLjk0LTMuNSAyLjIyLTYgMi4yMnoiLz48L3N2Zz4=', texture => { const mat = new THREE.SpriteMaterial({ map: texture }); userIcon = new THREE.Sprite(mat); userIcon.position.set(20, 10, 0); userIcon.scale.set(2, 2, 2); scene.add(userIcon); }) }
             function createPlaneSeparators() {
@@ -991,9 +1359,156 @@
                         node.componentOrbs.push(orb);
                     });
                     mesh = group; mesh.frustumCulled = false; mesh.add(createHtmlLabel("Control Plane", new THREE.Vector3(0, 1.5, 0)));
-                } else { const width = node.cpu.capacity * CONFIG.NODE_WIDTH_CPU_SCALE; const height = node.memory.capacity * CONFIG.NODE_HEIGHT_MEM_SCALE; const depth = CONFIG.NODE_DEPTH_STORAGE; const mat = new THREE.MeshLambertMaterial({ color: CONFIG.COLORS.WORKER_NODE, transparent: true, opacity: .2, side: THREE.DoubleSide, depthWrite: false }); mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), mat); mesh.position.y = height / 2; mesh.frustumCulled = false; mesh.renderOrder = -100; mesh.add(createHtmlLabel(node.name, new THREE.Vector3(0, height / 2 + .5, 0))); } mesh.userData = { id: node.id, type: 'node' }; scene.add(mesh); threeObjects.set(node.id, mesh); repositionNodes();
+                } else { 
+                    // Worker node
+                    const width = node.cpu.capacity * CONFIG.NODE_WIDTH_CPU_SCALE; 
+                    const height = node.memory.capacity * CONFIG.NODE_HEIGHT_MEM_SCALE; 
+                    const depth = CONFIG.NODE_DEPTH_STORAGE; 
+                    
+                    // Create group for worker node and its components
+                    const group = new THREE.Group();
+                    
+                    // Main node box
+                    const mat = new THREE.MeshLambertMaterial({ 
+                        color: CONFIG.COLORS.WORKER_NODE, 
+                        transparent: true, 
+                        opacity: .2, 
+                        side: THREE.DoubleSide, 
+                        depthWrite: false 
+                    }); 
+                    const nodeBox = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), mat); 
+                    nodeBox.position.y = height / 2; 
+                    nodeBox.frustumCulled = false; 
+                    nodeBox.renderOrder = -100; 
+                    nodeBox.add(createHtmlLabel(node.name, new THREE.Vector3(0, height / 2 + .5, 0))); 
+                    group.add(nodeBox);
+                    
+                    // Add kube-proxy visualization (small router icon)
+                    const kubeProxyGeom = new THREE.BoxGeometry(0.8, 0.4, 0.8);
+                    const kubeProxyMat = new THREE.MeshLambertMaterial({
+                        color: 0x00BCD4, // Network color
+                        emissive: 0x00BCD4,
+                        emissiveIntensity: 0.2
+                    });
+                    const kubeProxy = new THREE.Mesh(kubeProxyGeom, kubeProxyMat);
+                    kubeProxy.position.set(width/2 - 0.8, height - 0.5, 0);
+                    kubeProxy.userData = { type: 'kube-proxy', nodeId: node.id };
+                    
+                    // Add label for kube-proxy
+                    const proxyLabel = createHtmlLabel(getLabel('kube-proxy'), new THREE.Vector3(0, 0.4, 0));
+                    proxyLabel.element.style.fontSize = '10px';
+                    proxyLabel.element.style.padding = '2px 4px';
+                    kubeProxy.add(proxyLabel);
+                    
+                    group.add(kubeProxy);
+                    node.kubeProxy = kubeProxy; // Store reference for animations
+                    
+                    mesh = group;
+                } 
+                mesh.userData = { id: node.id, type: 'node' }; 
+                scene.add(mesh); 
+                threeObjects.set(node.id, mesh); 
+                repositionNodes();
             }
-            function createPodVisual(pod, node) { const nodeMesh = threeObjects.get(node.id); if (!nodeMesh) return; const podSize = .5 + (pod.cpuRequest + pod.memRequest) * CONFIG.POD_SCALE_FACTOR; const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(CONFIG.APP_COLORS[pod.image] || CONFIG.APP_COLORS.default) }); const podMesh = new THREE.Mesh(new THREE.CylinderGeometry(podSize / 2, podSize / 2, podSize, 6), mat); const nodeBoxSize = new THREE.Vector3(); new THREE.Box3().setFromObject(nodeMesh).getSize(nodeBoxSize); const podSpacing = podSize * 1.2; const podsPerRow = Math.floor(nodeBoxSize.x / podSpacing); const podIndexOnNode = Array.from(node.pods).indexOf(pod.id); const col = podIndexOnNode % podsPerRow; const row = Math.floor(podIndexOnNode / podsPerRow); podMesh.position.set(-nodeBoxSize.x / 2 + (col * podSpacing) + podSpacing / 2, -nodeBoxSize.y / 2 + podSize / 2, -nodeBoxSize.z / 2 + (row * podSpacing) + podSpacing / 2); podMesh.userData = { id: pod.id, type: 'pod' }; podMesh.scale.set(.01, .01, .01); const label = createHtmlLabel(pod.image, new THREE.Vector3(0, podSize / 2 + .2, 0)); label.element.classList.add('pod-label'); podMesh.add(label); nodeMesh.add(podMesh); threeObjects.set(pod.id, podMesh); new TWEEN.Tween(podMesh.scale).to({ x: 1, y: 1, z: 1 }, 500).easing(TWEEN.Easing.Elastic.Out).start(); recalculateServicePositions(); }
+            
+            function updateNodePortIndicators() {
+                // Remove existing NodePort indicators
+                clusterState.nodes.forEach(node => {
+                    if (node.nodePortIndicators) {
+                        node.nodePortIndicators.forEach(indicator => {
+                            indicator.parent?.remove(indicator);
+                        });
+                        node.nodePortIndicators = [];
+                    }
+                });
+                
+                // Add indicators for NodePort services
+                Object.values(clusterState.services).forEach(srv => {
+                    if (srv.type === 'NodePort') {
+                        clusterState.nodes.filter(n => n.type === 'worker').forEach(node => {
+                            const nodeMesh = threeObjects.get(node.id);
+                            if (!nodeMesh) return;
+                            
+                            // Create port indicator
+                            const portGroup = new THREE.Group();
+                            
+                            // Port socket visual
+                            const socketGeom = new THREE.CylinderGeometry(0.3, 0.25, 0.2, 8);
+                            const socketMat = new THREE.MeshLambertMaterial({
+                                color: 0xFFD700, // Gold color for ports
+                                emissive: 0xFFD700,
+                                emissiveIntensity: 0.3
+                            });
+                            const socket = new THREE.Mesh(socketGeom, socketMat);
+                            socket.rotation.z = Math.PI / 2;
+                            portGroup.add(socket);
+                            
+                            // Port number label
+                            const portLabel = createHtmlLabel(`:${srv.nodePort}`, new THREE.Vector3(0.5, 0, 0));
+                            portLabel.element.style.fontSize = '10px';
+                            portLabel.element.style.color = '#FFD700';
+                            portLabel.element.style.fontWeight = 'bold';
+                            portGroup.add(portLabel);
+                            
+                            // Position on the side of the node
+                            const nodeGroup = node.type === 'worker' ? nodeMesh : null;
+                            if (nodeGroup) {
+                                const nodeBox = nodeGroup.children[0];
+                                const width = node.cpu.capacity * CONFIG.NODE_WIDTH_CPU_SCALE;
+                                const height = node.memory.capacity * CONFIG.NODE_HEIGHT_MEM_SCALE;
+                                
+                                // Position on the left side of the node
+                                portGroup.position.set(-width/2 - 0.3, height/2, 0);
+                                nodeGroup.add(portGroup);
+                                
+                                // Store reference
+                                if (!node.nodePortIndicators) node.nodePortIndicators = [];
+                                node.nodePortIndicators.push(portGroup);
+                            }
+                        });
+                    }
+                });
+            }
+            
+            function createPodVisual(pod, node) { 
+                const nodeMesh = threeObjects.get(node.id); 
+                if (!nodeMesh) return; 
+                
+                // For worker nodes, get the actual node box from the group
+                const nodeBox = node.type === 'worker' ? nodeMesh.children[0] : nodeMesh;
+                
+                const podSize = .5 + (pod.cpuRequest + pod.memRequest) * CONFIG.POD_SCALE_FACTOR; 
+                const mat = new THREE.MeshLambertMaterial({ 
+                    color: new THREE.Color(CONFIG.APP_COLORS[pod.image] || CONFIG.APP_COLORS.default) 
+                }); 
+                const podMesh = new THREE.Mesh(new THREE.CylinderGeometry(podSize / 2, podSize / 2, podSize, 6), mat); 
+                
+                const nodeBoxSize = new THREE.Vector3(); 
+                new THREE.Box3().setFromObject(nodeBox).getSize(nodeBoxSize); 
+                const podSpacing = podSize * 1.2; 
+                const podsPerRow = Math.floor(nodeBoxSize.x / podSpacing); 
+                const podIndexOnNode = Array.from(node.pods).indexOf(pod.id); 
+                const col = podIndexOnNode % podsPerRow; 
+                const row = Math.floor(podIndexOnNode / podsPerRow); 
+                
+                podMesh.position.set(
+                    -nodeBoxSize.x / 2 + (col * podSpacing) + podSpacing / 2, 
+                    -nodeBoxSize.y / 2 + podSize / 2, 
+                    -nodeBoxSize.z / 2 + (row * podSpacing) + podSpacing / 2
+                ); 
+                podMesh.userData = { id: pod.id, type: 'pod' }; 
+                podMesh.scale.set(.01, .01, .01); 
+                
+                const label = createHtmlLabel(pod.image, new THREE.Vector3(0, podSize / 2 + .2, 0)); 
+                label.element.classList.add('pod-label'); 
+                podMesh.add(label); 
+                
+                nodeBox.add(podMesh); 
+                threeObjects.set(pod.id, podMesh); 
+                
+                new TWEEN.Tween(podMesh.scale).to({ x: 1, y: 1, z: 1 }, 500).easing(TWEEN.Easing.Elastic.Out).start(); 
+                recalculateServicePositions(); 
+            }
             function createServiceVisual(srv) {
                 // Find the first matching pod to determine color
                 const matchingPod = Object.values(clusterState.pods).find(pod => {
@@ -1205,6 +1720,7 @@
                     if (portalMesh.label) portalMesh.label.visible = srv.isVisible;
 
                     // Update network lines
+                    if (!srv.networkLines) srv.networkLines = [];
                     srv.networkLines.forEach(line => scene.remove(line));
                     srv.networkLines = [];
 
@@ -1213,8 +1729,16 @@
                         podMesh.getWorldPosition(podPos);
                         const points = [portalMesh.position, podPos];
                         const lineGeom = new THREE.BufferGeometry().setFromPoints(points);
+                        // Get color from the service mesh (handle groups for NodePort/LoadBalancer)
+                        let lineColor = 0x00BCD4; // Default color
+                        if (portalMesh.material && portalMesh.material.color) {
+                            lineColor = portalMesh.material.color;
+                        } else if (portalMesh.children && portalMesh.children[0] && portalMesh.children[0].material) {
+                            lineColor = portalMesh.children[0].material.color;
+                        }
+                        
                         const lineMat = new THREE.LineBasicMaterial({
-                            color: portalMesh.material.color,
+                            color: lineColor,
                             transparent: true,
                             opacity: 0.4,
                             linewidth: 2,
@@ -1397,8 +1921,8 @@
                                 srv.trafficParticles = [];
                             }
                             
-                            // Add new particle every few frames
-                            if (Math.random() < 0.02) {
+                            // Automatic particle creation disabled - use "Simulate Traffic" button instead
+                            /*if (Math.random() < 0.02) {
                                 const particleGeom = new THREE.SphereGeometry(0.15, 8, 8);
                                 const particleMat = new THREE.MeshBasicMaterial({
                                     color: 0x00FF00,
@@ -1414,7 +1938,7 @@
                                 };
                                 scene.add(particle);
                                 srv.trafficParticles.push(particle);
-                            }
+                            }*/
                             
                             // Update existing particles
                             srv.trafficParticles = srv.trafficParticles.filter(particle => {
@@ -1573,6 +2097,11 @@
                         ${srv.nodePort ? `<p>NodePort: <b>${srv.nodePort}</b></p>` : ''}
                         <p>Label Selector: ${srv.selector ? Object.entries(srv.selector).map(([k, v]) => `${k}=${v}`).join(', ') : 'None'}</p>
                         <p>Matching Pods: ${Object.values(clusterState.pods).filter(pod => pod.labels && srv.selector && Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value)).length}</p>
+                    </div>
+                    <div class="info-card">
+                        <h4>Actions</h4>
+                        <button onclick="window.sim.simulateTraffic(${srv.id})">Simulate Traffic</button>
+                        <button onclick="window.sim.deleteService(${srv.id})" style="background-color: #F44336;">Delete Service</button>
                     </div>`; 
             }
             function hideInspector() { 
@@ -1638,7 +2167,8 @@
                     const nodeLi = document.createElement('li'); 
                     const eyeIcon = node.isVisible ? '👁️' : '👁️‍🗨️'; 
                     const nodeType = node.type === 'master' ? getLabel('Master Node') : getLabel('Worker Node');
-                    nodeLi.innerHTML = `<div class="tree-item" data-id="${node.id}" data-type="node"><span class="tree-swivel">${node.pods.size > 0 ? '▶' : ''}</span><span class="tree-eye">${eyeIcon}</span><span>${node.name}</span><span class="role">(${nodeType})</span></div>`; 
+                    const trashCan = node.type === 'worker' ? '<span class="tree-trash" title="Delete Node">🗑️</span>' : '';
+                    nodeLi.innerHTML = `<div class="tree-item" data-id="${node.id}" data-type="node"><span class="tree-swivel">${node.pods.size > 0 ? '▶' : ''}</span><span class="tree-eye">${eyeIcon}</span><span>${node.name}</span><span class="role">(${nodeType})</span>${trashCan}</div>`; 
                     
                     const podsUl = document.createElement('ul'); 
                     podsUl.className = 'tree-item-children collapsed'; 
@@ -1646,7 +2176,7 @@
                     Array.from(node.pods).map(id => clusterState.pods[id]).filter(Boolean).forEach(pod => { 
                         const podLi = document.createElement('li'); 
                         const podEye = pod.isVisible ? '👁️' : '👁️‍🗨️'; 
-                        podLi.innerHTML = `<div class="tree-item" data-id="${pod.id}" data-type="pod"><span class="tree-swivel">▼</span><span class="tree-eye">${podEye}</span><span style="color:${CONFIG.APP_COLORS[pod.image]}">${getLabel('Pod')}: ${pod.name}</span></div>`; 
+                        podLi.innerHTML = `<div class="tree-item" data-id="${pod.id}" data-type="pod"><span class="tree-swivel">▼</span><span class="tree-eye">${podEye}</span><span style="color:${CONFIG.APP_COLORS[pod.image]}">${getLabel('Pod')}: ${pod.name}</span><span class="tree-trash" title="Delete Pod">🗑️</span></div>`; 
                         
                         const containerUl = document.createElement('ul'); 
                         containerUl.className = 'tree-item-children'; 
@@ -1671,7 +2201,7 @@
                 Object.values(clusterState.deployments).forEach(dep => { 
                     const depLi = document.createElement('li'); 
                     const eyeIcon = dep.isVisible ? '👁️' : '👁️‍🗨️'; 
-                    depLi.innerHTML = `<div class="tree-item" data-id="${dep.id}" data-type="deployment"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${CONFIG.APP_COLORS[dep.image]}">${dep.name}</span></div>`; 
+                    depLi.innerHTML = `<div class="tree-item" data-id="${dep.id}" data-type="deployment"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${CONFIG.APP_COLORS[dep.image]}">${dep.name}</span><span class="tree-trash" title="Delete Deployment">🗑️</span></div>`; 
                     depsUl.appendChild(depLi); 
                 }); 
                 
@@ -1692,7 +2222,7 @@
                         return Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value); 
                     }); 
                     const color = matchingPod ? CONFIG.APP_COLORS[matchingPod.image] : '#00BCD4'; 
-                    srvLi.innerHTML = `<div class="tree-item" data-id="${srv.id}" data-type="service"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${color}">${srv.name}</span></div>`; 
+                    srvLi.innerHTML = `<div class="tree-item" data-id="${srv.id}" data-type="service"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${color}">${srv.name}</span><span class="tree-trash" title="Delete Service">🗑️</span></div>`; 
                     srvsUl.appendChild(srvLi); 
                 }); 
                 
@@ -1740,7 +2270,61 @@
                                 controls.enabled = toolName === 'navigate';
                             }
 
-                            document.getElementById('hierarchy-tree').addEventListener('click', e => { const item = e.target.closest('.tree-item'); if (!item) return; if (e.target.classList.contains('tree-swivel')) { const children = item.nextElementSibling; if (children) { children.classList.toggle('collapsed'); e.target.textContent = children.classList.contains('collapsed') ? '▶' : '▼'; } } else if (e.target.classList.contains('tree-eye')) { const currentVisibility = e.target.textContent === '👁️'; toggleTreeItemVisibility(item, !currentVisibility); } else { const { id, type } = item.dataset; if (type === 'node') showNodeInspector(id); if (type === 'pod') showPodInspector(id); if (type === 'deployment') showDeploymentInspector(id); if (type === 'service') { showServiceInspector(id); clusterState.selectedServiceId = id; } } });
+                            document.getElementById('hierarchy-tree').addEventListener('click', e => { 
+                                const item = e.target.closest('.tree-item'); 
+                                if (!item) return; 
+                                
+                                if (e.target.classList.contains('tree-swivel')) { 
+                                    const children = item.nextElementSibling; 
+                                    if (children) { 
+                                        children.classList.toggle('collapsed'); 
+                                        e.target.textContent = children.classList.contains('collapsed') ? '▶' : '▼'; 
+                                    } 
+                                } else if (e.target.classList.contains('tree-eye')) { 
+                                    const currentVisibility = e.target.textContent === '👁️'; 
+                                    toggleTreeItemVisibility(item, !currentVisibility); 
+                                } else if (e.target.classList.contains('tree-trash')) {
+                                    const { id, type } = item.dataset;
+                                    let confirmMsg = '';
+                                    
+                                    if (type === 'node') {
+                                        const node = clusterState.nodes.find(n => n.id === id);
+                                        if (node && node.type === 'worker') {
+                                            confirmMsg = `Delete worker node ${node.name}? All pods on this node will be rescheduled.`;
+                                        }
+                                    } else if (type === 'pod') {
+                                        const pod = clusterState.pods[id];
+                                        if (pod) confirmMsg = `Delete pod ${pod.name}?`;
+                                    } else if (type === 'deployment') {
+                                        const dep = clusterState.deployments[id];
+                                        if (dep) confirmMsg = `Delete deployment ${dep.name}? This will also delete all its pods.`;
+                                    } else if (type === 'service') {
+                                        const srv = clusterState.services[id];
+                                        if (srv) confirmMsg = `Delete service ${srv.name}?`;
+                                    }
+                                    
+                                    if (confirmMsg && confirm(confirmMsg)) {
+                                        if (type === 'node' && clusterState.nodes.find(n => n.id === id && n.type === 'worker')) {
+                                            removeWorkerNode(id);
+                                        } else if (type === 'pod') {
+                                            terminatePod(id, 'deleted by user');
+                                        } else if (type === 'deployment') {
+                                            deleteDeployment(id);
+                                        } else if (type === 'service') {
+                                            deleteService(id);
+                                        }
+                                    }
+                                } else { 
+                                    const { id, type } = item.dataset; 
+                                    if (type === 'node') showNodeInspector(id); 
+                                    if (type === 'pod') showPodInspector(id); 
+                                    if (type === 'deployment') showDeploymentInspector(id); 
+                                    if (type === 'service') { 
+                                        showServiceInspector(id); 
+                                        clusterState.selectedServiceId = id; 
+                                    } 
+                                } 
+                            });
                             document.getElementById('hierarchy-search').addEventListener('input', e => { const searchTerm = e.target.value.toLowerCase(); const allItems = document.querySelectorAll('#hierarchy-tree li'); if (!searchTerm) { allItems.forEach(i => i.style.display = ''); return; } allItems.forEach(li => { const item = li.querySelector('.tree-item'); const text = item.textContent.toLowerCase(); const match = text.includes(searchTerm); li.style.display = match ? '' : 'none'; if (match) { let parentLi = li.parentElement.closest('li'); while (parentLi) { parentLi.style.display = ''; parentLi = parentLi.parentElement.closest('li'); } } }); });
                             document.getElementById('deployment-list').addEventListener('click', e => { const item = e.target.closest('.tree-item'); if (!item) return; if (e.target.classList.contains('tree-swivel')) { const children = item.nextElementSibling; if (children) { children.classList.toggle('collapsed'); e.target.textContent = children.classList.contains('collapsed') ? '▶' : '▼'; } } else { const { id, type } = item.dataset; if (type === 'pod') showPodInspector(id); if (type === 'deployment') showDeploymentInspector(id); } });
 
@@ -1906,6 +2490,7 @@
                 'etcd': 'Cluster Database',
                 'Scheduler': 'Placement Engine',
                 'Controller Manager': 'Automation Hub',
+                'kube-proxy': 'Network Router',
                 
                 // Actions
                 'Create Deployment': 'Create Container Manager',
@@ -2153,7 +2738,7 @@
                 }
             });
             
-            window.sim = { scaleDeployment, failNode, killPod, simulateTraffic };
+            window.sim = { scaleDeployment, failNode, killPod, simulateTraffic, deleteService };
                             addNode('master', 'master-node-1'); addNode('worker', 'worker-node-1');
                             setTool('navigate');
                             updateLabelSelector(); // Initialize the label selector
