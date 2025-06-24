@@ -943,7 +943,72 @@
                 } 
                 recalculateServicePositions(); 
             }
-            function updateDeploymentVisuals() { Object.values(clusterState.deployments).forEach(dep => { let depBoxVisual = threeObjects.get(`dep-${dep.id}`); const podMeshes = Array.from(dep.podIds).map(id => clusterState.pods[id] && threeObjects.get(id)).filter(Boolean); if (podMeshes.length === 0) { if (depBoxVisual) { scene.remove(depBoxVisual.label); scene.remove(depBoxVisual); threeObjects.delete(`dep-${dep.id}`); } return; } const boundingBox = new THREE.Box3(); podMeshes.forEach(podMesh => boundingBox.expandByObject(podMesh)); if (!depBoxVisual) { const colorHex = CONFIG.APP_COLORS[dep.image] || CONFIG.APP_COLORS.default; const boxMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(colorHex), transparent: true, opacity: .2, emissive: new THREE.Color(colorHex), emissiveIntensity: 0, side: THREE.DoubleSide, depthWrite: true }); depBoxVisual = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), boxMat); depBoxVisual.userData = { id: dep.id, type: 'deployment' }; depBoxVisual.frustumCulled = false; depBoxVisual.renderOrder = 5; const label = createHtmlLabel(dep.name, new THREE.Vector3()); label.element.classList.add('deployment-label'); label.element.style.color = colorHex; label.element.style.borderColor = colorHex; depBoxVisual.label = label; scene.add(depBoxVisual); scene.add(label); threeObjects.set(`dep-${dep.id}`, depBoxVisual); } const size = new THREE.Vector3(); boundingBox.getSize(size); const center = new THREE.Vector3(); boundingBox.getCenter(center); if (size.x > 0) { depBoxVisual.scale.copy(size).addScalar(1.5); depBoxVisual.position.copy(center); depBoxVisual.label.position.set(center.x, boundingBox.max.y + 1, center.z); depBoxVisual.visible = dep.isVisible; depBoxVisual.label.visible = dep.isVisible; } }); }
+            function updateDeploymentVisuals() { 
+                Object.values(clusterState.deployments).forEach(dep => { 
+                    let depBoxVisual = threeObjects.get(`dep-${dep.id}`); 
+                    const podMeshes = Array.from(dep.podIds).map(id => clusterState.pods[id] && threeObjects.get(id)).filter(Boolean); 
+                    
+                    if (podMeshes.length === 0) { 
+                        if (depBoxVisual) { 
+                            scene.remove(depBoxVisual.label); 
+                            scene.remove(depBoxVisual); 
+                            threeObjects.delete(`dep-${dep.id}`); 
+                        } 
+                        return; 
+                    } 
+                    
+                    // Calculate bounding box from pod meshes
+                    const boundingBox = new THREE.Box3(); 
+                    podMeshes.forEach(podMesh => {
+                        boundingBox.expandByObject(podMesh);
+                    }); 
+                    
+                    if (!depBoxVisual) { 
+                        const colorHex = CONFIG.APP_COLORS[dep.image] || CONFIG.APP_COLORS.default; 
+                        const boxMat = new THREE.MeshLambertMaterial({ 
+                            color: new THREE.Color(colorHex), 
+                            transparent: true, 
+                            opacity: .15, 
+                            emissive: new THREE.Color(colorHex), 
+                            emissiveIntensity: 0, 
+                            side: THREE.DoubleSide, 
+                            depthWrite: false 
+                        }); 
+                        depBoxVisual = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), boxMat); 
+                        depBoxVisual.userData = { id: dep.id, type: 'deployment' }; 
+                        depBoxVisual.frustumCulled = false; 
+                        depBoxVisual.renderOrder = -5; // Render behind pods
+                        const label = createHtmlLabel(dep.name, new THREE.Vector3()); 
+                        label.element.classList.add('deployment-label'); 
+                        label.element.style.color = colorHex; 
+                        label.element.style.borderColor = colorHex; 
+                        depBoxVisual.label = label; 
+                        scene.add(depBoxVisual); 
+                        scene.add(label); 
+                        threeObjects.set(`dep-${dep.id}`, depBoxVisual); 
+                    } 
+                    
+                    // Get the actual size and center from pod positions
+                    const size = new THREE.Vector3(); 
+                    boundingBox.getSize(size); 
+                    const center = new THREE.Vector3(); 
+                    boundingBox.getCenter(center); 
+                    
+                    if (size.x > 0 && size.y > 0 && size.z > 0) { 
+                        // Add padding to the box
+                        const padding = 1.2;
+                        depBoxVisual.scale.set(
+                            size.x + padding, 
+                            size.y + padding, 
+                            size.z + padding
+                        ); 
+                        depBoxVisual.position.copy(center); 
+                        depBoxVisual.label.position.set(center.x, boundingBox.max.y + 1, center.z);
+                        depBoxVisual.visible = dep.isVisible;
+                        depBoxVisual.label.visible = dep.isVisible;
+                    }
+                }); 
+            }
             function updateServiceVisuals() {
                 Object.values(clusterState.services).forEach(srv => {
                     const portalMesh = threeObjects.get(`srv-${srv.id}`); if (!portalMesh) return;
@@ -1035,7 +1100,78 @@
                     }
                 });
             }
-            function recalculateServicePositions() { Object.values(clusterState.services).forEach(recalculateServicePosition); }
+            function recalculateServicePositions() { 
+                const servicePositions = [];
+                
+                // First pass: calculate initial positions
+                Object.values(clusterState.services).forEach(srv => {
+                    const portalMesh = threeObjects.get(`srv-${srv.id}`);
+                    if (!portalMesh || !srv.isVisible) return;
+                    
+                    const networkPlaneY = CONFIG.PLANES.NETWORK.y;
+                    const matchingPods = Object.values(clusterState.pods).filter(pod => {
+                        if (!pod.labels || !srv.selector) return false;
+                        return Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value);
+                    });
+                    
+                    let targetPos;
+                    if (matchingPods.length === 0) {
+                        targetPos = new THREE.Vector3(0, networkPlaneY, -5);
+                    } else {
+                        let centerX = 0, centerZ = 0;
+                        matchingPods.forEach(pod => {
+                            const podMesh = threeObjects.get(pod.id);
+                            if (podMesh) {
+                                const worldPos = new THREE.Vector3();
+                                podMesh.getWorldPosition(worldPos);
+                                centerX += worldPos.x;
+                                centerZ += worldPos.z;
+                            }
+                        });
+                        centerX /= matchingPods.length;
+                        centerZ /= matchingPods.length;
+                        targetPos = new THREE.Vector3(centerX, networkPlaneY, centerZ);
+                    }
+                    
+                    servicePositions.push({
+                        id: srv.id,
+                        mesh: portalMesh,
+                        position: targetPos
+                    });
+                });
+                
+                // Second pass: resolve collisions
+                const serviceRadius = 3; // Minimum distance between services
+                for (let i = 0; i < servicePositions.length; i++) {
+                    for (let j = i + 1; j < servicePositions.length; j++) {
+                        const srv1 = servicePositions[i];
+                        const srv2 = servicePositions[j];
+                        
+                        const distance = srv1.position.distanceTo(srv2.position);
+                        if (distance < serviceRadius) {
+                            // Calculate repulsion vector
+                            const direction = new THREE.Vector3()
+                                .subVectors(srv2.position, srv1.position);
+                            
+                            if (direction.length() === 0) {
+                                // Handle identical positions
+                                direction.set(Math.random() - 0.5, 0, Math.random() - 0.5);
+                            }
+                            direction.normalize();
+                            
+                            // Move services apart
+                            const moveDistance = (serviceRadius - distance) / 2;
+                            srv1.position.sub(direction.clone().multiplyScalar(moveDistance));
+                            srv2.position.add(direction.multiplyScalar(moveDistance));
+                        }
+                    }
+                }
+                
+                // Apply final positions
+                servicePositions.forEach(srv => {
+                    srv.mesh.position.copy(srv.position);
+                });
+            }
             function animate() {
                 requestAnimationFrame(animate); if (clusterState.isPaused) return; const time = Date.now() * 0.001; const masterNode = clusterState.nodes.find(n => n.type === 'master'); if (masterNode?.coreMesh) {
                     masterNode.coreMesh.material.emissive.setHex(CONFIG.COLORS.MASTER_CORE); masterNode.coreMesh.material.emissiveIntensity = Math.sin(time * 3) * .4 + .6;
