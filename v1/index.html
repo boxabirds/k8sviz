@@ -878,55 +878,9 @@
                 
                 // Click handler for navigate tool
                 renderer.domElement.addEventListener('click', (event) => {
-                    console.log('=== CLICK DEBUG ===');
-                    console.log('Position:', event.clientX, event.clientY);
-                    console.log('Current tool:', currentTool);
-                    
                     if (currentTool === 'navigate' || currentTool === 'select') {
-                        console.log(`${currentTool} mode active - checking intersections...`);
-                        
                         // Get intersections
                         const intersects = getIntersects(event);
-                        console.log('Found', intersects.length, 'intersections');
-                        
-                        // Debug: Check what's in the scene
-                        const interactableObjects = [];
-                        scene.traverse((child) => {
-                            if (child.userData && (child.userData.type || child.userData.id)) {
-                                interactableObjects.push({
-                                    name: child.name,
-                                    type: child.type,
-                                    userData: child.userData,
-                                    visible: child.visible,
-                                    isMesh: child instanceof THREE.Mesh
-                                });
-                            }
-                        });
-                        console.log('Scene has', interactableObjects.length, 'interactable objects:', interactableObjects.slice(0, 10));
-                        
-                        // Log first 5 intersections in detail
-                        intersects.slice(0, 5).forEach((intersect, i) => {
-                            const obj = intersect.object;
-                            console.log(`Hit ${i}:`, {
-                                type: obj.type,
-                                userData: obj.userData,
-                                parent: obj.parent?.userData,
-                                name: obj.name,
-                                geometry: obj.geometry?.type,
-                                material: obj.material?.type
-                            });
-                            
-                            // Check parent chain for userData
-                            let parent = obj.parent;
-                            let depth = 0;
-                            while (parent && depth < 3) {
-                                if (parent.userData && (parent.userData.id || parent.userData.type)) {
-                                    console.log(`  Parent at depth ${depth}:`, parent.userData);
-                                }
-                                parent = parent.parent;
-                                depth++;
-                            }
-                        });
                         
                         // Try to find clickable object
                         if (intersects.length > 0) {
@@ -940,35 +894,25 @@
                                 // Check the object and its parents for userData
                                 while (target) {
                                     if (target.userData && (target.userData.id !== undefined || target.userData.serviceId !== undefined)) {
-                                        console.log('Found clickable object:', target.userData);
                                         found = true;
                                         
                                         const { id, type, serviceId } = target.userData;
-                                        console.log('Handling click for:', { id, type, serviceId });
                                         
                                         if (type === 'node' && id !== undefined) {
-                                            console.log('Showing node inspector for id:', id);
                                             showNodeInspector(id);
                                         }
                                         else if (type === 'pod' && id !== undefined) {
-                                            console.log('Showing pod inspector for id:', id);
                                             showPodInspector(id);
                                         }
                                         else if (type === 'deployment' && id !== undefined) {
-                                            console.log('Showing deployment inspector for id:', id);
                                             showDeploymentInspector(id);
                                         }
                                         else if (type === 'service-filter' && serviceId !== undefined) {
-                                            console.log('Showing service inspector for id:', serviceId);
                                             showServiceInspector(serviceId);
                                             clusterState.selectedServiceId = serviceId;
                                         }
                                         else if (type === 'controlPlane' && id !== undefined) {
-                                            console.log('Showing control plane component inspector');
                                             showControlPlaneInspector(obj.userData.component);
-                                        }
-                                        else {
-                                            console.log('Unknown type or missing id:', { type, id, serviceId });
                                         }
                                         break;
                                     }
@@ -979,15 +923,12 @@
                             }
                             
                             if (!found) {
-                                console.log('No clickable object found in intersections');
                                 hideInspector();
                             }
                         } else {
-                            console.log('No intersections found');
                             hideInspector();
                         }
                     }
-                    console.log('=== END CLICK DEBUG ===');
                 });
             }
 
@@ -1909,6 +1850,13 @@
                 if (externalLb) {
                     externalLb.visible = hasLoadBalancerService;
                     
+                    // Also hide/show the label
+                    externalLb.children.forEach(child => {
+                        if (child.isCSS2DObject && child.element) {
+                            child.element.style.display = hasLoadBalancerService ? 'block' : 'none';
+                        }
+                    });
+                    
                     // Remove old connections
                     if (externalLb.connections) {
                         externalLb.connections.forEach(line => scene.remove(line));
@@ -2161,40 +2109,7 @@
                 }
             }
             function onPointerMove(event) { if (!draggedPod) return; if (!hasDragged) { hasDragged = true; document.body.style.cursor = 'grabbing'; const worldPos = new THREE.Vector3(); draggedPod.getWorldPosition(worldPos); scene.attach(draggedPod); draggedPod.position.copy(worldPos); } const intersects = getIntersects(event); const planeIntersect = intersects.find(i => i.object.userData.type === 'node'); if (planeIntersect) draggedPod.position.set(planeIntersect.point.x, draggedPod.position.y, planeIntersect.point.z); else { const pos = new THREE.Vector3(); raycaster.ray.at(10, pos); draggedPod.position.copy(pos); } }
-            function onPointerUp(event) { 
-                console.log('onPointerUp called, currentTool:', currentTool);
-                
-                if (currentTool === 'navigate') {
-                    // Debug: log all intersected objects
-                    const intersects = getIntersects(event);
-                    console.log('Navigate tool - Click intersects:', intersects.length);
-                    intersects.forEach((intersect, i) => {
-                        console.log(`  ${i}: ${intersect.object.type || 'Mesh'}, userData:`, intersect.object.userData, 
-                                    'parent:', intersect.object.parent?.userData);
-                    });
-                    
-                    // Handle navigate tool clicks
-                    if (intersects.length > 0) {
-                        let obj = intersects.find(i => i.object.userData.id || i.object.userData.serviceId)?.object;
-                        if (obj) {
-                            if (obj.parent?.userData.type === 'node') obj = obj.parent;
-                        }
-                        if (obj?.userData) {
-                            const { id, type, serviceId } = obj.userData;
-                            console.log('Navigate click on:', type, id || serviceId);
-                            if (type === 'node' && id) showNodeInspector(id);
-                            if (type === 'pod' && id) showPodInspector(id);
-                            if (type === 'deployment' && id) showDeploymentInspector(id);
-                            if (type === 'service-filter' && serviceId) {
-                                showServiceInspector(serviceId);
-                                clusterState.selectedServiceId = serviceId;
-                            }
-                        }
-                    } else {
-                        hideInspector();
-                    }
-                    return;
-                }
+            function onPointerUp(event) {
                 
                 if (currentTool !== 'select') return; 
                 
@@ -2535,7 +2450,6 @@
                             function hideAddNodeModal() { document.getElementById('modal-overlay').style.display = 'none'; }
                             function setTool(toolName) {
                                 currentTool = toolName;
-                                console.log('Tool changed to:', toolName);
                                 document.getElementById('cluster-container').className = `${toolName}-tool`;
                                 document.getElementById('select-tool').classList.toggle('active', toolName === 'select');
                                 document.getElementById('navigate-tool').classList.toggle('active', toolName === 'navigate');
@@ -2616,18 +2530,11 @@
                             document.getElementById('pause-btn').addEventListener('click', () => { clusterState.isPaused = !clusterState.isPaused; document.getElementById('pause-btn').textContent = clusterState.isPaused ? 'Resume' : 'Pause'; });
                             document.getElementById('replica-slider').addEventListener('input', e => document.getElementById('replica-count-label').textContent = e.target.value);
                             // Remove old toggle button listener as we now have unified panels
-                            document.getElementById('select-tool').addEventListener('click', () => {
-                                console.log('Select tool button clicked');
-                                setTool('select');
-                            });
-                            document.getElementById('navigate-tool').addEventListener('click', () => {
-                                console.log('Navigate tool button clicked');
-                                setTool('navigate');
-                            });
+                            document.getElementById('select-tool').addEventListener('click', () => setTool('select'));
+                            document.getElementById('navigate-tool').addEventListener('click', () => setTool('navigate'));
                             
                             // Ensure navigate mode is set on startup
                             setTool('navigate');
-                            console.log('Initial tool set to:', currentTool);
                             
                             document.addEventListener('keydown', e => {
                                 if (e.key === 's' || e.key === 'S') setTool('select');
