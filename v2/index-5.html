@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Kubernetes Cluster Explorer</title>
+    <style>
+        :root {
+            --master-node: #2E7D32; --master-core: #66BB6A;
+            --worker-node: #455A64;
+            --pipe: #00BCD4; --particle: #FFFFFF;
+            --ui-bg: #263238; --ui-text: #ECEFF1; --ui-accent: #00BCD4; --ui-border: #37474F;
+            --pod-running: #4CAF50; --pod-pending: #FFC107; --pod-failed: #F44336;
+        }
+
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #1a1a1a; color: var(--ui-text); overflow: hidden; display: flex; }
+        #cluster-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
+        #cluster-container.navigate-tool { cursor: grab; }
+        #cluster-container.navigate-tool:active { cursor: grabbing; }
+        #cluster-container.select-tool { cursor: pointer; }
+        
+        .label { color: var(--ui-text); background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 5px; font-size: 14px; pointer-events: none; }
+        .pod-label { font-size: 12px; padding: 2px 4px; background: rgba(0,0,0,0.5); }
+        .deployment-label { font-size: 14px; font-weight: bold; padding: 4px 8px; border-radius: 4px; border: 2px solid; background: rgba(0,0,0,0.6); }
+
+        .panel { background-color: var(--ui-bg); box-shadow: 0 0 15px rgba(0,0,0,0.5); z-index: 10; display: flex; flex-direction: column; transition: transform 0.3s ease-in-out; }
+        #top-bar { position: fixed; top: 0; left: 0; width: 100%; height: 50px; background-color: var(--ui-bg); border-bottom: 2px solid var(--ui-border); display: flex; align-items: center; padding: 0 20px; box-sizing: border-box; gap: 15px; z-index: 20; }
+        #left-sidebar { position: fixed; top: 50px; left: 0; width: 320px; height: calc(100vh - 50px - 80px); padding: 20px; border-right: 2px solid var(--ui-border); overflow-y: auto; }
+        #inspector-panel { position: fixed; top: 50px; right: 0; width: 350px; height: calc(100vh - 50px); padding: 20px; border-left: 2px solid var(--ui-border); transform: translateX(105%); z-index: 12; background: rgba(38,50,56,0.95); backdrop-filter: blur(5px); }
+        #inspector-panel.visible { transform: translateX(0); }
+        #event-log { position: fixed; bottom: 0; left: 322px; width: calc(100% - 322px); height: 80px; background-color: rgba(38, 50, 56, 0.9); border-top: 2px solid var(--ui-border); padding: 10px; box-sizing: border-box; overflow-y: auto; font-family: 'Courier New', Courier, monospace; font-size: 12px; }
+        
+        #hierarchy-panel { position: fixed; top: 50px; right: 0; width: 300px; height: calc(100vh - 50px); background: rgba(38,50,56,0.85); backdrop-filter: blur(5px); border-left: 2px solid var(--ui-border); z-index: 15; display: flex; flex-direction: column; transition: transform 0.3s ease-out; }
+        #hierarchy-panel.collapsed { transform: translateX(calc(100% - 30px)); }
+        .panel-toggle-btn { position: absolute; top: 50%; left: 0; transform: translate(-100%, -50%); background: var(--ui-bg); border: 2px solid var(--ui-border); border-right: none; padding: 15px 5px; cursor: pointer; border-radius: 8px 0 0 8px; }
+        #inspector-panel .panel-toggle-btn { display: none; }
+        #hierarchy-header { padding: 10px; border-bottom: 1px solid var(--ui-border); }
+        #hierarchy-search { width: calc(100% - 20px); padding: 8px; background: var(--ui-border); color: var(--ui-text); border: 1px solid var(--ui-accent); border-radius: 4px; }
+        #hierarchy-tree { flex-grow: 1; overflow-y: auto; padding: 10px; font-size: 14px; }
+        #hierarchy-tree ul, #deployment-list ul { list-style-type: none; padding-left: 20px; }
+        #hierarchy-tree li, #deployment-list li { margin: 4px 0; }
+        .tree-item { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+        .tree-item:hover { background: rgba(0, 188, 212, 0.1); }
+        .tree-swivel, .tree-eye { cursor: pointer; user-select: none; }
+        .tree-swivel { width: 1em; display: inline-block; }
+        .tree-item-children.collapsed { display: none; }
+        .tree-item.hidden-by-search { display: none; }
+        .tree-item .role { font-size: 12px; color: #90A4AE; margin-left: auto; padding-right: 5px; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        
+        #modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 999; display: none; align-items: center; justify-content: center; }
+        #modal-content { background: var(--ui-bg); padding: 20px; border-radius: 8px; border: 2px solid var(--ui-accent); }
+        #modal-content input { width: 95%; margin-bottom: 15px; padding: 8px; }
+        
+        .gauge-container { width: 100%; height: 18px; background-color: #546E7A; border-radius: 9px; margin-top: 5px; overflow: hidden; }
+        .gauge-bar { height: 100%; border-radius: 9px; transition: width 0.5s ease-out; text-align: right; padding-right: 5px; box-sizing: border-box; color: white; font-size: 11px; line-height: 18px; }
+        .cpu-bar { background-color: #2196F3; } .mem-bar { background-color: var(--pod-running); }
+        
+        .tool-btn { font-size: 18px; padding: 5px 10px; background: var(--ui-border); color: var(--ui-text); }
+        .tool-btn.active { background: var(--ui-accent); color: var(--ui-bg); }
+
+        h2,h3{color:var(--ui-accent);margin-top:0;border-bottom:1px solid var(--ui-border);padding-bottom:10px}h3 .subtitle{font-size:14px;color:var(--ui-text);font-weight:400;display:block;margin-top:4px}button{background-color:var(--ui-accent);color:var(--ui-bg);border:none;padding:10px 15px;border-radius:4px;cursor:pointer;font-weight:700;transition:background-color .2s}button:hover{background-color:#00acc1}button.danger{background-color:#f44336;color:var(--ui-text)}select{width:100%;padding:8px;background-color:var(--ui-border);color:var(--ui-text);border:1px solid var(--ui-accent);border-radius:4px}
+        .info-card{background-color:var(--ui-border);padding:15px;border-radius:5px;margin-bottom:20px;font-size:14px}.info-card h4,.info-card h5{margin:0 0 10px;color:var(--ui-text)}.info-card p{margin:5px 0}.info-card .explanation{font-style:italic;color:#b0bec5;font-size:13px;margin-top:10px;border-left:3px solid var(--ui-accent);padding-left:10px}
+        #welcome-panel{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:550px;background:rgba(38,50,56,.95);border:2px solid var(--ui-accent);border-radius:10px;padding:30px;z-index:1000;box-shadow:0 0 25px rgba(0,0,0,.7)}
+    </style>
+</head>
+<body>
+
+    <div id="cluster-container"></div>
+    <div id="welcome-panel">
+        <h2>Welcome to the Kubernetes Explorer!</h2>
+        <p>This is a live 3D simulation of a Kubernetes cluster. Use the controls on the left to deploy applications and manage your cluster.</p>
+        <p class="explanation"><b>Interaction Modes:</b><br>- Use the <b>Tool Palette</b> in the top bar to switch between navigating and selecting.<br>- 🖐️ <b>Navigate:</b> Pan, zoom, and rotate the camera.<br>- 👆 <b>Select:</b> Click objects to inspect them or drag-and-drop Pods.</p>
+        <button id="close-welcome-btn">Let's Go!</button>
+    </div>
+
+    <div id="modal-overlay"> <div id="modal-content"> <h4>Name New Worker Node</h4> <input type="text" id="new-node-name-input"> <button id="confirm-add-node-btn">Create</button> <button id="cancel-add-node-btn">Cancel</button> </div> </div>
+    <div id="top-bar"> 
+        <button id="add-worker-btn">Add Worker Node</button> 
+        <button id="remove-worker-btn">Remove Worker Node</button> 
+        <button id="pause-btn">Pause</button> 
+        <div style="margin-left:auto; display:flex; gap: 5px;">
+            <button id="select-tool" class="tool-btn" title="Select Tool (S)">👆</button>
+            <button id="navigate-tool" class="tool-btn active" title="Navigate Tool (V)">🖐️</button>
+        </div>
+    </div>
+    <div id="left-sidebar" class="panel">
+        <div class="control-group"> <h3>Cluster Overview</h3> <div class="info-card"> <p>Nodes: <span id="node-count-str">1 Master, 1 Worker</span></p> <p>Total Pods: <span id="pod-count">0</span></p> </div> </div>
+        <div class="control-group"> <h3>Cluster Resource Pool</h3> <div class="info-card" id="resource-pool-stats"> <label>Aggregated CPU Usage:</label><div class="gauge-container"><div class="gauge-bar cpu-bar" id="total-cpu-gauge" style="width: 0%;"></div></div><label>Aggregated Memory Usage:</label><div class="gauge-container"><div class="gauge-bar mem-bar" id="total-mem-gauge" style="width: 0%;"></div></div></div> </div>
+        <div class="control-group"> <h3>Create Deployment</h3> <div class="info-card"> <label for="image-select">Container Image:</label> <select id="image-select"> <option value="nginx" data-cpu="100" data-mem="128">nginx (small web server)</option> <option value="redis" data-cpu="200" data-mem="256">redis (medium cache)</option> <option value="postgres" data-cpu="500" data-mem="512">postgres (large database)</option> </select> <br><br> <label for="replica-slider">Replicas: <span id="replica-count-label">3</span></label> <input type="range" id="replica-slider" min="1" max="10" value="3"> <p class="explanation">This tells the Deployment how many identical <b>Pods</b> (replicas) to keep running.</p> <br> <button id="create-deployment-btn">Deploy</button> </div> </div>
+        <div class="control-group"> <h3>Active Deployments</h3> <div id="deployment-list" class="info-card" style="padding: 10px;"></div> </div>
+        <div class="control-group"> <h3>Expose a Deployment<span class="subtitle">(via a "Service")</span></h3> <div class="info-card"> <label for="service-select">Select a Deployment:</label> <select id="service-select"><option>No deployments yet</option></select> <br><br> <button id="create-service-btn" disabled>Create Service</button> <p class="explanation">A Service provides a single, stable network entry point to access the pods of a Deployment.</p></div> </div>
+        <div class="control-group"> <h3>Active Services</h3> <div id="service-list"></div> </div>
+    </div>
+
+    <div id="inspector-panel" class="panel"> <h3 id="inspector-title">Inspector</h3> <div id="inspector-content"><p>Click on any object in the cluster to see its details here.</p></div> <button id="close-inspector-btn" style="position:absolute;top:10px;right:10px;">X</button> </div>
+    <div id="hierarchy-panel"> <button id="toggle-hierarchy-btn" class="panel-toggle-btn">»</button> <div id="hierarchy-header"> <input type="text" id="hierarchy-search" placeholder="Search..."> </div> <div id="hierarchy-tree"></div> </div>
+    <div id="event-log"><p>[INFO] Control Plane online. Awaiting commands.</p></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            class InteractionManager {
+                constructor(app) {
+                    this.app = app;
+                    this.camera = app.camera;
+                    this.domElement = app.renderer.domElement;
+                    
+                    this.raycaster = new THREE.Raycaster();
+                    this.mouse = new THREE.Vector2();
+                    this.controls = new THREE.OrbitControls(this.camera, app.labelRenderer.domElement);
+                    this.controls.enableDamping = true;
+                    this.controls.dampingFactor = 0.05;
+                    this.controls.minDistance = 10;
+                    this.controls.maxDistance = 70;
+                    this.controls.target.set(0, 2, -5);
+
+                    this.draggedPod = null;
+                    this.originalPodState = {};
+                    this.hasDragged = false;
+
+                    this.domElement.addEventListener('pointerdown', e => this._onPointerDown(e), false);
+                    this.domElement.addEventListener('pointermove', e => this._onPointerMove(e), false);
+                    this.domElement.addEventListener('pointerup', e => this._onPointerUp(e), false);
+                }
+
+                setTool(toolName) {
+                    this.app.currentTool = toolName;
+                    document.getElementById('cluster-container').className = `${toolName}-tool`;
+                    document.getElementById('select-tool').classList.toggle('active', toolName === 'select');
+                    document.getElementById('navigate-tool').classList.toggle('active', toolName === 'navigate');
+                    this.controls.enabled = toolName === 'navigate';
+                }
+
+                update() {
+                    if (this.controls.enabled) {
+                        this.controls.update();
+                    }
+                }
+
+                _getIntersects(event) {
+                    const canvasBounds = this.domElement.getBoundingClientRect();
+                    this.mouse.x = ((event.clientX - canvasBounds.left) / canvasBounds.width) * 2 - 1;
+                    this.mouse.y = -((event.clientY - canvasBounds.top) / canvasBounds.height) * 2 + 1;
+                    this.raycaster.setFromCamera(this.mouse, this.camera);
+                    return this.raycaster.intersectObjects(this.app.scene.children, true);
+                }
+
+                _onPointerDown(event) {
+                    if (event.button !== 0 || this.app.currentTool !== 'select') return;
+                    this.hasDragged = false;
+                    const intersects = this._getIntersects(event);
+                    if (intersects.length > 0) {
+                        const obj = intersects.find(i => i.object.userData.type === 'pod')?.object;
+                        if (obj) {
+                            this.draggedPod = obj;
+                            this.originalPodState = { position: this.draggedPod.position.clone(), parent: this.draggedPod.parent };
+                        }
+                    }
+                }
+
+                _onPointerMove(event) {
+                    if (!this.draggedPod) return;
+                    if (!this.hasDragged) {
+                        this.hasDragged = true;
+                        document.body.style.cursor = 'grabbing';
+                        const worldPos = new THREE.Vector3();
+                        this.draggedPod.getWorldPosition(worldPos);
+                        this.app.scene.attach(this.draggedPod);
+                        this.draggedPod.position.copy(worldPos);
+                    }
+                    const intersects = this._getIntersects(event);
+                    const planeIntersect = intersects.find(i => i.object.userData.type === 'node');
+                    if (planeIntersect) {
+                        this.draggedPod.position.set(planeIntersect.point.x, this.draggedPod.position.y, planeIntersect.point.z);
+                    } else {
+                        const pos = new THREE.Vector3();
+                        this.raycaster.ray.at(10, pos);
+                        this.draggedPod.position.copy(pos);
+                    }
+                }
+
+                _onPointerUp(event) {
+                    if (this.app.currentTool !== 'select') return;
+                    
+                    if (this.draggedPod) {
+                        if (this.hasDragged) {
+                            this.app.onPodDropped(this.draggedPod, this.originalPodState, this._getIntersects(event));
+                        }
+                        this.draggedPod = null;
+                        this.hasDragged = false;
+                        document.body.style.cursor = 'pointer';
+                        return; 
+                    }
+
+                    const intersects = this._getIntersects(event);
+                    if (intersects.length > 0) {
+                        let obj = intersects.find(i => i.object.userData.id)?.object;
+                        if (obj) {
+                            if(obj.parent?.userData.type === 'node') obj = obj.parent;
+                            this.app.onObjectSelected(obj);
+                        }
+                    } else {
+                        this.app.onObjectSelected(null);
+                    }
+                }
+            }
+        
+            class KubernetesExplorer {
+                constructor() {
+                    this.CONFIG = {
+                        NODE_WIDTH_CPU_SCALE:1/500, NODE_HEIGHT_MEM_SCALE:1/1024 * 0.55, NODE_DEPTH_STORAGE:8, POD_SCALE_FACTOR:1/1024,
+                        APP_COLORS:{nginx:'#00ff88',redis:'#ff6347',postgres:'#4169e1',default:'#cccccc'},
+                        COLORS:{MASTER_NODE:0x2E7D32,MASTER_CORE:0x66BB6A,WORKER_NODE:0x455A64,PIPE:0x00BCD4,PARTICLE:0xFFFFFF,POD_FAILED:0xF44336,POD_PENDING:0xFFC107, POD_RUNNING:0x4CAF50},
+                    };
+                    
+                    this.clusterState = { nodes:[], pods:{}, deployments:{}, services:{}, traffic:[], isPaused:false, nextId:0, selectedServiceId: null };
+                    this.threeObjects = new Map();
+                    this.currentTool = 'navigate';
+                }
+
+                init() {
+                    this._initThree();
+                    this.interactionManager = new InteractionManager(this);
+                    this.uiManager = new UIManager(this);
+                    this._addNode('master', 'master-node-1');
+                    this._addNode('worker', 'worker-node-1');
+                    this._animate();
+                    setInterval(() => this._reconciliationLoop(), 1000);
+                }
+
+                _initThree() {
+                    const container = document.getElementById('cluster-container');
+                    this.scene = new THREE.Scene();
+                    this.scene.background = new THREE.Color(0x1a1a1a);
+                    this.scene.fog = new THREE.Fog(0x1a1a1a, 40, 100);
+                    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000); this.camera.position.set(10, 15, 20);
+                    this.renderer = new THREE.WebGLRenderer({ antialias: true }); this.renderer.setSize(window.innerWidth, window.innerHeight); container.appendChild(this.renderer.domElement);
+                    this.labelRenderer = new THREE.CSS2DRenderer(); this.labelRenderer.setSize(window.innerWidth, window.innerHeight); this.labelRenderer.domElement.style.position = 'absolute'; this.labelRenderer.domElement.style.top = '0px'; container.appendChild(this.labelRenderer.domElement);
+                    const ambient = new THREE.AmbientLight(0xffffff,0.5); this.scene.add(ambient); const light = new THREE.DirectionalLight(0xffffff,0.7); light.position.set(10,20,5); this.scene.add(light);
+                    this._createUserIcon();
+                    window.addEventListener('resize',()=>this._onWindowResize(),false);
+                }
+                
+                _getNextId() { return this.clusterState.nextId++; }
+                _addNode(type, name){if(this.clusterState.nodes.length>=101){this.uiManager._logEvent('Cluster at maximum node capacity (100 workers).','WARN');return;} const id=this._getNextId(); const node={id,type,name: name || `${type}-node-${id}`,pods:new Set(),cpu:{usage:0},memory:{usage:0},isFailing:false,isVisible:true}; if(type==='worker'){node.cpu.capacity=4000;node.memory.capacity=8192;} this.clusterState.nodes.push(node); this._createNodeVisual(node); this.uiManager.updateClusterOverview(this.clusterState); this.uiManager.renderHierarchy(this.clusterState);}
+                _removeLastWorkerNode(){const workers=this.clusterState.nodes.filter(n=>n.type==='worker');if(workers.length===0){this.uiManager._logEvent('No worker nodes to remove.','WARN');return;} const nodeToRemove=workers[workers.length-1];this._failNode(nodeToRemove.id,true);setTimeout(()=>{this.clusterState.nodes=this.clusterState.nodes.filter(n=>n.id!==nodeToRemove.id);const mesh=this.threeObjects.get(nodeToRemove.id);if(mesh){this.scene.remove(mesh);if(mesh.pipe)this.scene.remove(mesh.pipe);this.threeObjects.delete(nodeToRemove.id);const particlesToRemove=this.clusterState.traffic.filter(t=>t.nodeId===nodeToRemove.id);particlesToRemove.forEach(p=>this.scene.remove(p.mesh));this.clusterState.traffic=this.clusterState.traffic.filter(t=>t.nodeId!==nodeToRemove.id);} this.uiManager._logEvent(`${nodeToRemove.name} fully decommissioned.`);this.uiManager.updateClusterOverview(this.clusterState);this._repositionNodes();this.uiManager.renderHierarchy(this.clusterState);},3e3);}
+                _createDeployment(){const option=document.getElementById('image-select').selectedOptions[0];const depId=this._getNextId();const newDep={id:depId,name:`${option.value}-deployment-${depId}`,replicas:parseInt(document.getElementById('replica-slider').value,10),image:option.value,cpuRequest:parseInt(option.dataset.cpu),memRequest:parseInt(option.dataset.mem),podIds:new Set(),isVisible:true};this.clusterState.deployments[newDep.id]=newDep;this.uiManager._logEvent(`Deployment '${newDep.name}' created. Goal: ${newDep.replicas} replicas.`);this.uiManager.updateDeploymentList(this.clusterState);this.uiManager.renderHierarchy(this.clusterState);this.uiManager.updateServiceDropdown(this.clusterState);}
+                _createService(){const depId=document.getElementById('service-select').value;if(!depId)return;const dep=this.clusterState.deployments[depId];const srvId=this._getNextId();const newSrv={id:srvId,name:`${dep.image}-service`,deploymentId:dep.id,isVisible:true,networkLines:[]};this.clusterState.services[srvId]=newSrv;this._createServiceVisual(newSrv);this.uiManager._logEvent(`Service '${newSrv.name}' created, exposing Deployment '${dep.name}'.`);this.uiManager.updateServiceList(this.clusterState);this.uiManager.renderHierarchy(this.clusterState);this.uiManager.updateServiceDropdown(this.clusterState);}
+                _scaleDeployment(id,reps){const deployment=this.clusterState.deployments[id];if(!deployment)return;this.uiManager._logEvent(`Scaling '${deployment.name}' from ${deployment.replicas} to ${reps} replicas.`);deployment.replicas=reps;this.uiManager.updateDeploymentList(this.clusterState);}
+                _terminatePod(podId,reason){const pod=this.clusterState.pods[podId];if(!pod||pod.status==='Terminating')return;pod.status='Terminating';const podMesh=this.threeObjects.get(podId);if(podMesh)new TWEEN.Tween(podMesh.scale).to({x:0,y:0,z:0},500).onComplete(()=>{podMesh.parent?.remove(podMesh);this.threeObjects.delete(podId);this._recalculateServicePositions();}).start();if(pod.nodeId){const node=this.clusterState.nodes.find(n=>n.id===pod.nodeId);if(node){node.pods.delete(podId);this._recalculateNodeResources(node);}}const dep=this.clusterState.deployments[pod.deploymentId];if(dep)dep.podIds.delete(podId);this.uiManager._logEvent(`Pod ${pod.name} was ${reason}.`);setTimeout(()=>{delete this.clusterState.pods[podId];this.uiManager.renderHierarchy(this.clusterState);this.uiManager.updateDeploymentList(this.clusterState);},500);}
+                _failNode(nodeId,isRemoval=false){const node=this.clusterState.nodes.find(n=>n.id===nodeId);if(!node||node.type==='master')return;node.isFailing=true;const nodeMesh=this.threeObjects.get(nodeId);if(nodeMesh)nodeMesh.material.color.set(this.CONFIG.COLORS.POD_FAILED);this.uiManager._logEvent(`Worker Node ${node.name} is failing! Evacuating pods...`,'ERROR');Array.from(node.pods).forEach(podId=>{const pod=this.clusterState.pods[podId];if(!pod)return;pod.status='Pending';pod.nodeId=null;const podMesh=this.threeObjects.get(podId);if(podMesh){const worldPos=new THREE.Vector3();podMesh.getWorldPosition(worldPos);this.scene.attach(podMesh);podMesh.position.copy(worldPos);podMesh.material.color.set(this.CONFIG.COLORS.POD_PENDING);}});node.pods.clear();this._recalculateNodeResources(node);this.uiManager.renderHierarchy(this.clusterState);if(isRemoval)return;setTimeout(()=>{node.isFailing=false;if(nodeMesh)nodeMesh.material.color.set(this.CONFIG.COLORS.WORKER_NODE);this.uiManager._logEvent(`Worker Node ${node.name} has recovered.`);this.uiManager.updateResourcePoolView(this.clusterState);},1e4);}
+                _killPod(podId){const pod=this.clusterState.pods[podId];if(!pod)return;pod.status='Failed';const podMesh=this.threeObjects.get(podId);if(podMesh)podMesh.material.color.set(this.CONFIG.COLORS.POD_FAILED);this.uiManager._logEvent(`Pod ${pod.name} killed! Control Plane will replace it.`,'WARN');setTimeout(()=>{if(this.clusterState.pods[podId]?.status==='Failed')this._terminatePod(podId,"cleaned up");},2e3);}
+                _findSchedulableNode(cpu,mem){return this.clusterState.nodes.find(n=>n.type==='worker'&&!n.isFailing&&(n.cpu.usage+cpu<=n.cpu.capacity)&&(n.memory.usage+mem<=n.memory.capacity));}
+                _simulateTraffic(serviceId){const srv=this.clusterState.services[serviceId];if(!srv)return;const portalMesh=this.threeObjects.get(`srv-${srv.id}`);const pods=Array.from(this.clusterState.deployments[srv.deploymentId].podIds).map(id=>this.threeObjects.get(id)).filter(Boolean);if(pods.length===0)return;for(let i=0;i<10;i++){const particle=new THREE.Mesh(new THREE.SphereGeometry(.2,8,8),new THREE.MeshBasicMaterial({color:0xffffff}));const targetPod=pods[Math.floor(Math.random()*pods.length)];const podPos=new THREE.Vector3();targetPod.getWorldPosition(podPos);const path=new THREE.CatmullRomCurve3([this.userIcon.position,portalMesh.position,podPos]);particle.position.copy(this.userIcon.position);this.scene.add(particle);new TWEEN.Tween({t:0}).to({t:1},1500+Math.random()*500).easing(TWEEN.Easing.Quadratic.InOut).onUpdate(({t})=>{path.getPointAt(t,particle.position);}).onComplete(()=>{this.scene.remove(particle);}).delay(i*100).start();}}
+                _createUserIcon(){const loader=new THREE.TextureLoader();loader.load('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0wIDNjMS42NiAwIDMgMS4zNCAzIDNzLTEuMzQgMy0zIDMtMy0xLjM0LTMtMyAxLjM0LTMgMy0zem0wIDE0LjJjLTIuNSAwLTQuNzEtMS4yOC02LTIuMjIuMDMtMS45OSA0LTMuMDggNi0zLjA4czUuOTcgMS4wOSA2IDMuMDhjLTEuMjkgLjk0LTMuNSAyLjIyLTYgMi4yMnoiLz48L3N2Zz4=',texture=>{const mat=new THREE.SpriteMaterial({map:texture});this.userIcon=new THREE.Sprite(mat);this.userIcon.position.set(20,10,0);this.userIcon.scale.set(2,2,2);this.scene.add(this.userIcon);})}
+                _createHtmlLabel(text,pos){const div=document.createElement('div');div.className='label';div.textContent=text;const label=new THREE.CSS2DObject(div);label.position.copy(pos);return label;}
+                _reconciliationLoop(){if(this.clusterState.isPaused)return;let stateChanged=false;Object.values(this.clusterState.deployments).forEach(dep=>{const currentPods=Array.from(dep.podIds).map(id=>this.clusterState.pods[id]).filter(p=>p&&p.status!=='Terminating');if(currentPods.length>dep.replicas){const podToKill=currentPods[0];if(podToKill){this._terminatePod(podToKill.id,"scaled down");stateChanged=true;}}else if(currentPods.length<dep.replicas){const id=this._getNextId();this.clusterState.pods[id]={id,deploymentId:dep.id,name:`${dep.image}-pod-${id}`,image:dep.image,status:'Pending',nodeId:null,cpuRequest:dep.cpuRequest,memRequest:dep.memRequest,isVisible:true};dep.podIds.add(id);this.uiManager._logEvent(`Pod for ${dep.name} is Pending.`);stateChanged=true;}});Object.values(this.clusterState.pods).filter(p=>p.status==='Pending').forEach(pod=>{const node=this._findSchedulableNode(pod.cpuRequest,pod.memRequest);if(node){pod.status='Running';pod.nodeId=node.id;node.pods.add(pod.id);this._recalculateNodeResources(node);this._createPodVisual(pod,node);this.uiManager._logEvent(`Pod ${pod.name} scheduled on Node ${node.name}.`);stateChanged=true;}else{this.uiManager._logEvent(`No available Node has enough resources for pod ${pod.name}.`,'WARN')}});if(stateChanged){this.uiManager.renderHierarchy(this.clusterState);this.uiManager.updateDeploymentList(this.clusterState);}this._updateDeploymentVisuals();this._updateServiceVisuals();this.uiManager.updateClusterOverview(this.clusterState);this.uiManager.updateResourcePoolView(this.clusterState);}
+                _createNodeVisual(node){let mesh;if(node.type==='master'){const group=new THREE.Group();const foundationGeom=new THREE.BoxGeometry(1,1,1);const foundationMat=new THREE.MeshLambertMaterial({color:this.CONFIG.COLORS.MASTER_NODE,transparent:true,opacity:.5});const foundationMesh=new THREE.Mesh(foundationGeom,foundationMat);foundationMesh.position.y=-.5;const coreMat=new THREE.MeshLambertMaterial({color:this.CONFIG.COLORS.MASTER_CORE});node.coreMesh=new THREE.Mesh(new THREE.SphereGeometry(.5,16,16),coreMat);node.coreMesh.position.y=0;group.add(foundationMesh,node.coreMesh);mesh=group;mesh.add(this._createHtmlLabel("Control Plane",new THREE.Vector3(0,1.5,0)));}else{const width=node.cpu.capacity*this.CONFIG.NODE_WIDTH_CPU_SCALE;const height=node.memory.capacity*this.CONFIG.NODE_HEIGHT_MEM_SCALE;const depth=this.CONFIG.NODE_DEPTH_STORAGE;const mat=new THREE.MeshLambertMaterial({color:this.CONFIG.COLORS.WORKER_NODE,transparent:true,opacity:.2,side:THREE.DoubleSide});mesh=new THREE.Mesh(new THREE.BoxGeometry(width,height,depth),mat);mesh.position.y=height/2;mesh.add(this._createHtmlLabel(node.name,new THREE.Vector3(0,height/2+.5,0)));}mesh.userData={id:node.id,type:'node'};this.scene.add(mesh);this.threeObjects.set(node.id,mesh);this._repositionNodes();if(node.type==='worker')this._createPipe(node);}
+                _createPodVisual(pod,node){const nodeMesh=this.threeObjects.get(node.id);if(!nodeMesh)return;const podSize=.5+(pod.cpuRequest+pod.memRequest)*this.CONFIG.POD_SCALE_FACTOR;const mat=new THREE.MeshLambertMaterial({color:new THREE.Color(this.CONFIG.APP_COLORS[pod.image]||this.CONFIG.APP_COLORS.default)});const podMesh=new THREE.Mesh(new THREE.CylinderGeometry(podSize/2,podSize/2,podSize,6),mat);const nodeBoxSize=new THREE.Vector3();new THREE.Box3().setFromObject(nodeMesh).getSize(nodeBoxSize);const podSpacing=podSize*1.2;const podsPerRow=Math.floor(nodeBoxSize.x/podSpacing);const podIndexOnNode=Array.from(node.pods).indexOf(pod.id);const col=podIndexOnNode%podsPerRow;const row=Math.floor(podIndexOnNode/podsPerRow);podMesh.position.set(-nodeBoxSize.x/2+(col*podSpacing)+podSpacing/2,-nodeBoxSize.y/2+podSize/2,-nodeBoxSize.z/2+(row*podSpacing)+podSpacing/2);podMesh.userData={id:pod.id,type:'pod'};podMesh.scale.set(.01,.01,.01);const label=this._createHtmlLabel(pod.image,new THREE.Vector3(0,podSize/2+.2,0));label.element.classList.add('pod-label');podMesh.add(label);nodeMesh.add(podMesh);this.threeObjects.set(pod.id,podMesh);new TWEEN.Tween(podMesh.scale).to({x:1,y:1,z:1},500).easing(TWEEN.Easing.Elastic.Out).start();this._recalculateServicePositions();}
+                _createServiceVisual(srv){const dep=this.clusterState.deployments[srv.deploymentId];const color=new THREE.Color(this.CONFIG.APP_COLORS[dep.image]);const portalGeom=new THREE.TorusGeometry(1.5,.2,16,100);const portalMat=new THREE.MeshBasicMaterial({color,side:THREE.DoubleSide});const portalMesh=new THREE.Mesh(portalGeom,portalMat);portalMesh.rotation.x=Math.PI/2;portalMesh.userData={id:srv.id,type:'service'};const label=this._createHtmlLabel(srv.name,new THREE.Vector3(0,0.5,0));portalMesh.add(label);portalMesh.label=label;this.scene.add(portalMesh);this.threeObjects.set(`srv-${srv.id}`,portalMesh);this._recalculateServicePosition(srv);}
+                _createPipe(workerNode){const masterNode=this.clusterState.nodes.find(n=>n.type==='master');const masterMesh=this.threeObjects.get(masterNode.id);const workerMesh=this.threeObjects.get(workerNode.id);if(!masterMesh||!workerMesh)return;const startPoint=workerMesh.position.clone().setY(0);const endPoint=workerMesh.position.clone().setY(workerMesh.geometry.parameters.height/-2);const path=new THREE.LineCurve3(startPoint,endPoint);const pipeGeom=new THREE.TubeGeometry(path,20,.1,8,false);const pipeMat=new THREE.MeshBasicMaterial({color:this.CONFIG.COLORS.PIPE});const pipeMesh=new THREE.Mesh(pipeGeom,pipeMat);workerMesh.pipe=pipeMesh;this.scene.add(pipeMesh);for(let i=0;i<3;i++){const particle=new THREE.Mesh(new THREE.SphereGeometry(.15,8,8),new THREE.MeshBasicMaterial({color:this.CONFIG.COLORS.PARTICLE}));this.clusterState.traffic.push({mesh:particle,path,progress:i*.33,nodeId:workerNode.id});this.scene.add(particle);}}
+                _repositionNodes(){const workers=this.clusterState.nodes.filter(n=>n.type==='worker');const master=this.clusterState.nodes.find(n=>n.type==='master');if(master)this.threeObjects.get(master.id).position.set(0,0,0);const boundingBox=new THREE.Box3();workers.forEach((node,i)=>{const mesh=this.threeObjects.get(node.id);if(mesh){mesh.position.set((i%2===0?-1:1)*7,mesh.position.y,-8+(Math.floor(i/2)*-12));boundingBox.expandByObject(mesh);if(mesh.pipe){const startPoint=mesh.position.clone().setY(0);const endPoint=mesh.position.clone().setY(mesh.geometry.parameters.height/-2);const newPath=new THREE.LineCurve3(startPoint,endPoint);mesh.pipe.geometry.dispose();mesh.pipe.geometry=new THREE.TubeGeometry(newPath,20,.1,8,false);this.clusterState.traffic.filter(t=>t.nodeId===node.id).forEach(t=>t.path=newPath);}}});const masterMeshGroup=this.threeObjects.get(master.id);if(masterMeshGroup){const foundationMesh=masterMeshGroup.children[0];if(workers.length>0){const size=new THREE.Vector3();boundingBox.getSize(size);const center=new THREE.Vector3();boundingBox.getCenter(center);foundationMesh.scale.set(size.x+10,1,size.z+10);foundationMesh.position.set(center.x,-.5,center.z);}else{foundationMesh.scale.set(1,1,1);foundationMesh.position.set(0,-.5,0);}}this._recalculateServicePositions();}
+                _updateDeploymentVisuals(){Object.values(this.clusterState.deployments).forEach(dep=>{let depBoxVisual=this.threeObjects.get(`dep-${dep.id}`);const podMeshes=Array.from(dep.podIds).map(id=>this.clusterState.pods[id]&&this.threeObjects.get(id)).filter(Boolean);if(podMeshes.length===0){if(depBoxVisual){this.scene.remove(depBoxVisual.label);this.scene.remove(depBoxVisual);this.threeObjects.delete(`dep-${dep.id}`);}return;}const boundingBox=new THREE.Box3();podMeshes.forEach(podMesh=>boundingBox.expandByObject(podMesh));if(!depBoxVisual){const colorHex=this.CONFIG.APP_COLORS[dep.image]||this.CONFIG.APP_COLORS.default;const boxMat=new THREE.MeshLambertMaterial({color:new THREE.Color(colorHex),transparent:true,opacity:.1,emissive:new THREE.Color(colorHex),emissiveIntensity:0,side:THREE.DoubleSide});depBoxVisual=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),boxMat);depBoxVisual.userData={id:dep.id,type:'deployment'};const label=this._createHtmlLabel(dep.name,new THREE.Vector3());label.element.classList.add('deployment-label');label.element.style.color=colorHex;label.element.style.borderColor=colorHex;depBoxVisual.label=label;this.scene.add(depBoxVisual);this.scene.add(label);this.threeObjects.set(`dep-${dep.id}`,depBoxVisual);}const size=new THREE.Vector3();boundingBox.getSize(size);const center=new THREE.Vector3();boundingBox.getCenter(center);if(size.x>0){depBoxVisual.scale.copy(size).addScalar(1.5);depBoxVisual.position.copy(center);depBoxVisual.label.position.set(center.x,boundingBox.max.y+1,center.z);depBoxVisual.visible=dep.isVisible;depBoxVisual.label.visible=dep.isVisible;}});}
+                _updateServiceVisuals(){Object.values(this.clusterState.services).forEach(srv=>{const portalMesh=this.threeObjects.get(`srv-${srv.id}`);if(!portalMesh)return;const dep=this.clusterState.deployments[srv.deploymentId];if(!dep){portalMesh.visible=false;srv.networkLines.forEach(line=>line.visible=false);return;}const podMeshes=Array.from(dep.podIds).map(id=>this.threeObjects.get(id)).filter(Boolean);if(podMeshes.length===0){portalMesh.visible=false;srv.networkLines.forEach(line=>line.visible=false);return;}portalMesh.visible=srv.isVisible;if(portalMesh.label)portalMesh.label.visible=srv.isVisible;srv.networkLines.forEach(line=>this.scene.remove(line));srv.networkLines=[];podMeshes.forEach(podMesh=>{const podPos=new THREE.Vector3();podMesh.getWorldPosition(podPos);const points=[portalMesh.position,podPos];const lineGeom=new THREE.BufferGeometry().setFromPoints(points);const lineMat=new THREE.LineBasicMaterial({color:portalMesh.material.color,transparent:true,opacity:.5});const line=new THREE.Line(lineGeom,lineMat);line.visible=srv.isVisible;srv.networkLines.push(line);this.scene.add(line);});});}
+                _recalculateServicePosition(srv){const portalMesh=this.threeObjects.get(`srv-${srv.id}`);if(!portalMesh||!srv.isVisible)return;const overallBBox=new THREE.Box3();this.scene.children.forEach(child=>{if(child.isMesh&&child.userData.id&&child.userData.type!=='service'&&child.visible){overallBBox.expandByObject(child);}});const dep=this.clusterState.deployments[srv.deploymentId];if(!dep)return;const podMeshes=Array.from(dep.podIds).map(id=>this.threeObjects.get(id)).filter(Boolean);if(podMeshes.length===0)return;const podBBox=new THREE.Box3();podMeshes.forEach(p=>podBBox.expandByObject(p));const center=new THREE.Vector3();podBBox.getCenter(center);portalMesh.position.set(center.x,overallBBox.max.y+2,center.z);}
+                _recalculateServicePositions(){Object.values(this.clusterState.services).forEach(srv => this._recalculateServicePosition(srv));}
+                _animate(){requestAnimationFrame(()=>this._animate());if(this.clusterState.isPaused)return;const time=Date.now()*0.001;const masterNode=this.clusterState.nodes.find(n=>n.type==='master');if(masterNode?.coreMesh){masterNode.coreMesh.material.emissive.setHex(this.CONFIG.COLORS.MASTER_CORE);masterNode.coreMesh.material.emissiveIntensity=Math.sin(time*3)*.4+.6;}this.clusterState.traffic.forEach(p=>{p.progress=(p.progress+0.005)%1;p.path.getPointAt(p.progress,p.mesh.position);});if(this.clusterState.selectedServiceId){const srv=this.clusterState.services[this.clusterState.selectedServiceId];if(srv){const depBox=this.threeObjects.get(`dep-${srv.deploymentId}`);if(depBox){depBox.material.emissive.set(depBox.material.color);depBox.material.emissiveIntensity=Math.sin(time*5)*.5+.5;}}}this.interactionManager.update();TWEEN.update();this.renderer.render(this.scene,this.camera);this.labelRenderer.render(this.scene,this.camera);}
+                _onWindowResize(){this.camera.aspect=window.innerWidth/window.innerHeight;this.camera.updateProjectionMatrix();this.renderer.setSize(window.innerWidth,window.innerHeight);this.labelRenderer.setSize(window.innerWidth,window.innerHeight);}
+                _repositionPodInNode(podMesh,nodeMesh){const pod=this.clusterState.pods[podMesh.userData.id];const node=this.clusterState.nodes.find(n=>n.id===nodeMesh.userData.id);const podSize=.5+(pod.cpuRequest+pod.memRequest)*this.CONFIG.POD_SCALE_FACTOR;const nodeBoxSize=new THREE.Vector3();new THREE.Box3().setFromObject(nodeMesh).getSize(nodeBoxSize);const podSpacing=podSize*1.2;const podsPerRow=Math.floor(nodeBoxSize.x/podSpacing);const podIndexOnNode=Array.from(node.pods).indexOf(pod.id);const col=podIndexOnNode%podsPerRow;const row=Math.floor(podIndexOnNode/podsPerRow);const newPos=new THREE.Vector3(-nodeBoxSize.x/2+(col*podSpacing)+podSpacing/2,-nodeBoxSize.y/2+podSize/2,-nodeBoxSize.z/2+(row*podSpacing)+podSpacing/2);new TWEEN.Tween(podMesh.position).to(newPos,300).easing(TWEEN.Easing.Quadratic.Out).start();}
+                _recalculateNodeResources(node){node.cpu.usage=0;node.memory.usage=0;node.pods.forEach(id=>{const p=this.clusterState.pods[id];if(p){node.cpu.usage+=p.cpuRequest;node.memory.usage+=p.memRequest;}});}
+                
+                onObjectSelected(obj) {
+                    Object.values(this.clusterState.deployments).forEach(d => {
+                        const box = this.threeObjects.get(`dep-${d.id}`);
+                        if (box) box.material.emissiveIntensity = 0;
+                    });
+                    this.clusterState.selectedServiceId = null;
+
+                    if (obj) {
+                        const { id, type } = obj.userData;
+                        if (type === 'node') this.uiManager.showNodeInspector(id);
+                        if (type === 'pod') this.uiManager.showPodInspector(id);
+                        if (type === 'deployment') this.uiManager.showDeploymentInspector(id);
+                        if (type === 'service') {
+                            this.uiManager.showServiceInspector(id);
+                            this.clusterState.selectedServiceId = id;
+                        }
+                    } else {
+                        this.uiManager.hideInspector();
+                    }
+                }
+
+                onPodDropped(draggedPod, originalPodState, intersects) {
+                    const dropTarget = intersects.find(i => i.object.userData.type === 'node' && i.object.userData.id !== originalPodState.parent.userData.id)?.object;
+                    if (dropTarget) {
+                        const pod = this.clusterState.pods[draggedPod.userData.id];
+                        const targetNode = this.clusterState.nodes.find(n => n.id === dropTarget.userData.id);
+                        if (targetNode.cpu.usage + pod.cpuRequest <= targetNode.cpu.capacity && targetNode.memory.usage + pod.memRequest <= targetNode.memory.capacity) {
+                            const oldNode = this.clusterState.nodes.find(n => n.id === pod.nodeId);
+                            oldNode.pods.delete(pod.id);
+                            this._recalculateNodeResources(oldNode);
+                            pod.nodeId = targetNode.id;
+                            targetNode.pods.add(pod.id);
+                            this._recalculateNodeResources(targetNode);
+                            dropTarget.add(draggedPod);
+                            this._repositionPodInNode(draggedPod, targetNode);
+                            this.uiManager._logEvent(`Pod ${pod.name} moved to Node ${targetNode.name}.`);
+                        } else {
+                            this.uiManager._logEvent(`Node ${targetNode.name} lacks resources for Pod ${pod.name}.`, 'WARN');
+                            originalPodState.parent.add(draggedPod);
+                            this._repositionPodInNode(draggedPod, originalPodState.parent);
+                        }
+                    } else {
+                        originalPodState.parent.add(draggedPod);
+                        this._repositionPodInNode(draggedPod, originalPodState.parent);
+                    }
+                    this.uiManager.renderHierarchy(this.clusterState);
+                    this.uiManager.updateDeploymentList(this.clusterState);
+                }
+
+                _initUI() {
+                    this.uiManager._initEventListeners();
+                    window.sim={scaleDeployment:(id,reps)=>this._scaleDeployment(id,reps),failNode:(id)=>this._failNode(id),killPod:(id)=>this._killPod(id),simulateTraffic:(id)=>this._simulateTraffic(id)};
+                }
+            }
+            
+            class UIManager {
+                constructor(app) {
+                    this.app = app;
+                    this._initEventListeners();
+                }
+
+                _initEventListeners() {
+                    document.getElementById('hierarchy-tree').addEventListener('click', (e) => {const item=e.target.closest('.tree-item');if(!item)return;if(e.target.classList.contains('tree-swivel')){const children=item.nextElementSibling;if(children){children.classList.toggle('collapsed');e.target.textContent=children.classList.contains('collapsed')?'▶':'▼';}}else if(e.target.classList.contains('tree-eye')){const currentVisibility=e.target.textContent==='👁️';this._toggleTreeItemVisibility(item,!currentVisibility);}else{const{id,type}=item.dataset;if(type==='node')this.showNodeInspector(id);if(type==='pod')this.showPodInspector(id);if(type==='deployment')this.showDeploymentInspector(id);if(type==='service'){this.showServiceInspector(id);this.app.clusterState.selectedServiceId=id;}}});
+                    document.getElementById('hierarchy-search').addEventListener('input', (e) => {const searchTerm=e.target.value.toLowerCase();const allItems=document.querySelectorAll('#hierarchy-tree li');if(!searchTerm){allItems.forEach(i=>i.style.display='');return;}allItems.forEach(li=>{const item=li.querySelector('.tree-item');const text=item.textContent.toLowerCase();const match=text.includes(searchTerm);li.style.display=match?'':'none';if(match){let parentLi=li.parentElement.closest('li');while(parentLi){parentLi.style.display='';parentLi=parentLi.parentElement.closest('li');}}});});
+                    document.getElementById('deployment-list').addEventListener('click', (e) => { const item = e.target.closest('.tree-item'); if(!item) return; if(e.target.classList.contains('tree-swivel')){ const children = item.nextElementSibling; if(children){ children.classList.toggle('collapsed'); e.target.textContent = children.classList.contains('collapsed') ? '▶' : '▼'; } } else { const {id, type} = item.dataset; if (type === 'pod') this.showPodInspector(id); if (type === 'deployment') this.showDeploymentInspector(id); }});
+                    document.getElementById('add-worker-btn').addEventListener('click', ()=>this.showAddNodeModal());
+                    document.getElementById('confirm-add-node-btn').addEventListener('click', ()=>{const name=document.getElementById('new-node-name-input').value;if(name)this.app._addNode('worker',name);this.hideAddNodeModal();});
+                    document.getElementById('cancel-add-node-btn').addEventListener('click', ()=>this.hideAddNodeModal());
+                    document.getElementById('new-node-name-input').addEventListener('keydown', e=>{if(e.key==='Enter')document.getElementById('confirm-add-node-btn').click();});
+                    document.getElementById('remove-worker-btn').addEventListener('click', ()=>this.app._removeLastWorkerNode());
+                    document.getElementById('create-deployment-btn').addEventListener('click', ()=>this.app._createDeployment());
+                    document.getElementById('create-service-btn').addEventListener('click', ()=>this.app._createService());
+                    document.getElementById('close-welcome-btn').addEventListener('click', ()=>document.getElementById('welcome-panel').style.display='none');
+                    document.getElementById('close-inspector-btn').addEventListener('click', ()=>this.hideInspector());
+                    document.getElementById('pause-btn').addEventListener('click', ()=> {this.app.clusterState.isPaused=!this.app.clusterState.isPaused; document.getElementById('pause-btn').textContent = this.app.clusterState.isPaused ? 'Resume' : 'Pause';});
+                    document.getElementById('replica-slider').addEventListener('input', e => document.getElementById('replica-count-label').textContent=e.target.value);
+                    document.getElementById('toggle-hierarchy-btn').addEventListener('click', e => { const panel = document.getElementById('hierarchy-panel'); panel.classList.toggle('collapsed'); e.target.textContent = panel.classList.contains('collapsed') ? '«' : '»'; });
+                    document.getElementById('select-tool').addEventListener('click', ()=>this.app.interactionManager.setTool('select'));
+                    document.getElementById('navigate-tool').addEventListener('click', ()=>this.app.interactionManager.setTool('navigate'));
+                }
+
+                _logEvent(message,level='INFO'){const logEl=document.getElementById('event-log');const p=document.createElement('p');const time=new Date().toLocaleTimeString();p.textContent=`[${time}] [${level}] ${message}`;if(level==='WARN')p.style.color=this.app.CONFIG.COLORS.POD_PENDING;if(level==='ERROR')p.style.color=this.app.CONFIG.COLORS.POD_FAILED;logEl.prepend(p);if(logEl.children.length>50)logEl.removeChild(logEl.lastChild);}
+                updateClusterOverview(state){const workers=state.nodes.filter(n=>n.type==='worker').length;document.getElementById('node-count-str').textContent=`1 Master, ${workers} Worker${workers!==1?'s':''}`;document.getElementById('pod-count').textContent=Object.keys(state.pods).filter(k=>state.pods[k].status!=='Terminating').length;}
+                updateResourcePoolView(state){const workers=state.nodes.filter(n=>n.type==='worker'&&!n.isFailing);let totalCpu=0,totalMem=0,usedCpu=0,usedMem=0;workers.forEach(n=>{totalCpu+=n.cpu.capacity;totalMem+=n.memory.capacity;usedCpu+=n.cpu.usage;usedMem+=n.memory.usage;});const cpuPercent=totalCpu>0?(usedCpu/totalCpu*100).toFixed(1):0;const memPercent=totalMem>0?(usedMem/totalMem*100).toFixed(1):0;document.getElementById('total-cpu-gauge').style.width=`${cpuPercent}%`;document.getElementById('total-cpu-gauge').textContent=`${usedCpu}m / ${totalCpu}m (${cpuPercent}%)`;document.getElementById('total-mem-gauge').style.width=`${memPercent}%`;document.getElementById('total-mem-gauge').textContent=`${usedMem}Mi / ${totalMem}Mi (${memPercent}%)`;}
+                updateDeploymentList(state){const listEl=document.getElementById('deployment-list');listEl.innerHTML='<ul></ul>';const ul=listEl.querySelector('ul');Object.values(state.deployments).forEach(dep=>{const running=Array.from(dep.podIds).filter(id=>state.pods[id]?.status==='Running').length;const el=document.createElement('li');el.innerHTML=`<div class="tree-item" data-id="${dep.id}" data-type="deployment"><span class="tree-swivel">▶</span><span style="color:${this.app.CONFIG.APP_COLORS[dep.image]}">${dep.name} (${running}/${dep.replicas})</span></div>`;const podsUl=document.createElement('ul');podsUl.className='tree-item-children collapsed';Array.from(dep.podIds).map(id=>state.pods[id]).filter(Boolean).forEach(pod=>{const podLi=document.createElement('li');const statusColor={Running:this.app.CONFIG.COLORS.POD_RUNNING,Pending:this.app.CONFIG.COLORS.POD_PENDING,Failed:this.app.CONFIG.COLORS.POD_FAILED,Terminating:'#aaa'}[pod.status];podLi.innerHTML=`<div class="tree-item" data-id="${pod.id}" data-type="pod"><span class="status-dot" style="background-color:${statusColor};"></span><span>${pod.name} on ${state.nodes.find(n=>n.id===pod.nodeId)?.name||'N/A'}</span></div>`;podsUl.appendChild(podLi);});el.appendChild(podsUl);ul.appendChild(el);});}
+                showNodeInspector(nodeId){const node=this.app.clusterState.nodes.find(n=>n.id===nodeId);if(!node)return;this.hideHierarchy();document.getElementById('inspector-panel').classList.add('visible');document.getElementById('inspector-title').textContent=`Node: ${node.name}`;let content='';if(node.type==='master'){content=`<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Node</b> is a single machine in the cluster. This one has the <b>master</b> role, so it runs the <b>Control Plane</b> software (the pulsing sphere) which is the brain of the entire cluster.</p></div>`;}else{const cpuUsage=((node.cpu.usage/node.cpu.capacity)*100).toFixed(1);const memUsage=((node.memory.usage/node.memory.capacity)*100).toFixed(1);content=`<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Worker Node</b> IS a machine (virtual or physical) that runs your application Pods. It contributes its CPU and Memory to the cluster-wide <b>Resource Pool</b> shown on the left.</p></div><div class="info-card"><h4>Node Capacity & Usage</h4><p>CPU: ${node.cpu.usage}m / ${node.cpu.capacity}m (${cpuUsage}%)</p><p>Memory: ${node.memory.usage}Mi / ${node.memory.capacity}Mi (${memUsage}%)</p><p>Pods Running: ${node.pods.size}</p><br><button class="danger" onclick="window.sim.failNode(${node.id})">Simulate Node Failure</button></div>`;} document.getElementById('inspector-content').innerHTML=content;}
+                showPodInspector(podId){const pod=this.app.clusterState.pods[podId];if(!pod)return;this.hideHierarchy();document.getElementById('inspector-panel').classList.add('visible');document.getElementById('inspector-title').textContent=`Pod: ${pod.name}`;document.getElementById('inspector-content').innerHTML=`<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Pod</b> is a wrapper around one or more application <b>Containers</b>. The Container (which holds your app code) runs inside the Pod. The Pod is the smallest 'physical' unit that can be scheduled to run on a Node.</p></div><div class="info-card"><h4>Pod Details</h4><p>Based on Image: ${pod.image}</p><p>Status: ${pod.status}</p><p>Running on: Node ${this.app.clusterState.nodes.find(n=>n.id===pod.nodeId)?.name||'N/A'}</p><h5>Resource Requests</h5><p>CPU: ${pod.cpuRequest}m | Memory: ${pod.memRequest}Mi</p><br><button class="danger" onclick="window.sim.killPod(${pod.id})">Kill Pod</button></div>`;}
+                showDeploymentInspector(depId){const dep=this.app.clusterState.deployments[depId];if(!dep)return;this.hideHierarchy();document.getElementById('inspector-panel').classList.add('visible');document.getElementById('inspector-title').textContent=`Deployment: ${dep.name}`;document.getElementById('inspector-content').innerHTML=`<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Deployment</b> manages the Pods for <b>one component</b> of your application (e.g., the web servers). A complete 'Application' is often composed of multiple Deployments and Services working together. <br><br><b>This visual box is a LOGICAL grouping, not a physical one.</b></p></div><div class="info-card"><h4>Deployment Status</h4><p>Desired Replicas: ${dep.replicas}</p><p>Current Pods: ${Array.from(dep.podIds).filter(id=>this.app.clusterState.pods[id]).length}</p><p>Container Image: ${dep.image}</p></div>`;}
+                showServiceInspector(srvId){const srv=this.app.clusterState.services[srvId];if(!srv)return;this.hideHierarchy();document.getElementById('inspector-panel').classList.add('visible');document.getElementById('inspector-title').textContent=`Service: ${srv.name}`;document.getElementById('inspector-content').innerHTML=`<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Service</b> is a cluster-wide networking rule that does not live 'on' any single Node. It creates a stable entry point (this portal) that floats above the entire resource pool, and load-balances traffic to the correct Pods, which it finds using labels.</p></div><div class="info-card"><h4>Service Details</h4><p>Exposes Deployment: ${this.app.clusterState.deployments[srv.deploymentId]?.name||'N/A'}</p><p>Target Pods: ${this.app.clusterState.deployments[srv.deploymentId]?.podIds.size||0}</p></div>`;}
+                hideInspector(){document.getElementById('inspector-panel').classList.remove('visible');document.getElementById('hierarchy-panel').style.display='flex';}
+                hideHierarchy(){document.getElementById('hierarchy-panel').style.display='none';}
+                updateServiceDropdown(state){const select=document.getElementById('service-select');const btn=document.getElementById('create-service-btn');const exposedDepIds=new Set(Object.values(state.services).map(s=>String(s.deploymentId)));const availableDeps=Object.values(state.deployments).filter(dep=>!exposedDepIds.has(String(dep.id)));select.innerHTML='';if(availableDeps.length===0){select.innerHTML='<option>No unexposed deployments</option>';btn.disabled=true;}else{availableDeps.forEach(dep=>{const option=document.createElement('option');option.value=dep.id;option.textContent=dep.name;select.appendChild(option);});btn.disabled=false;}}
+                updateServiceList(state){const listEl=document.getElementById('service-list');listEl.innerHTML='';Object.values(state.services).forEach(srv=>{const el=document.createElement('div');el.className='info-card';el.innerHTML=`<h4>${srv.name}</h4><p>Exposing: ${state.deployments[srv.deploymentId]?.name||'N/A'}</p><button onclick="window.sim.simulateTraffic(${srv.id})">Simulate Traffic</button>`;listEl.appendChild(el);});}
+                renderHierarchy(state){const treeContainer=document.getElementById('hierarchy-tree');const scrollTop=treeContainer.scrollTop;treeContainer.innerHTML='';const clusterUl=document.createElement('ul');clusterUl.innerHTML=`<li><div class="tree-item"><span class="tree-swivel">▼</span><span><b>Cluster</b></span></div></li>`;const clusterLi=clusterUl.firstElementChild;const resourcesUl=document.createElement('ul');resourcesUl.className='tree-item-children';const nodesLi=document.createElement('li');nodesLi.innerHTML=`<div class="tree-item"><span class="tree-swivel">▼</span><span><b>Nodes</b></span></div>`;const nodesUl=document.createElement('ul');nodesUl.className='tree-item-children';state.nodes.forEach(node=>{const nodeLi=document.createElement('li');const eyeIcon=node.isVisible?'👁️':'👁️‍🗨️';nodeLi.innerHTML=`<div class="tree-item" data-id="${node.id}" data-type="node"><span class="tree-swivel">${node.pods.size>0?'▶':''}</span><span class="tree-eye">${eyeIcon}</span><span>${node.name}</span><span class="role">(${node.type})</span></div>`;const podsUl=document.createElement('ul');podsUl.className='tree-item-children collapsed';Array.from(node.pods).map(id=>state.pods[id]).filter(Boolean).forEach(pod=>{const podLi=document.createElement('li');const podEye=pod.isVisible?'👁️':'👁️‍🗨️';podLi.innerHTML=`<div class="tree-item" data-id="${pod.id}" data-type="pod"><span class="tree-swivel">▼</span><span class="tree-eye">${podEye}</span><span style="color:${this.app.CONFIG.APP_COLORS[pod.image]}">Pod: ${pod.name}</span></div>`;const containerUl=document.createElement('ul');containerUl.className='tree-item-children';containerUl.innerHTML=`<li><div class="tree-item"><span class="tree-swivel"></span><span class="tree-eye" style="opacity:0.5"></span><span style="color:${this.app.CONFIG.APP_COLORS[pod.image]}">Container: ${pod.image}</span></div></li>`;podLi.appendChild(containerUl);podsUl.appendChild(podLi);});if(node.pods.size>0)nodeLi.appendChild(podsUl);nodesUl.appendChild(nodeLi);});nodesLi.appendChild(nodesUl);resourcesUl.appendChild(nodesLi);const depsLi=document.createElement('li');depsLi.innerHTML=`<div class="tree-item"><span class="tree-swivel">▼</span><span><b>Deployments</b></span></div>`;const depsUl=document.createElement('ul');depsUl.className='tree-item-children';Object.values(state.deployments).forEach(dep=>{const depLi=document.createElement('li');const eyeIcon=dep.isVisible?'👁️':'👁️‍🗨️';depLi.innerHTML=`<div class="tree-item" data-id="${dep.id}" data-type="deployment"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${this.app.CONFIG.APP_COLORS[dep.image]}">${dep.name}</span></div>`;depsUl.appendChild(depLi);});depsLi.appendChild(depsUl);resourcesUl.appendChild(depsLi);const srvsLi=document.createElement('li');srvsLi.innerHTML=`<div class="tree-item"><span class="tree-swivel">▼</span><span><b>Services</b></span></div>`;const srvsUl=document.createElement('ul');srvsUl.className='tree-item-children';Object.values(state.services).forEach(srv=>{const srvLi=document.createElement('li');const eyeIcon=srv.isVisible?'👁️':'👁️‍🗨️';const dep=state.deployments[srv.deploymentId];srvLi.innerHTML=`<div class="tree-item" data-id="${srv.id}" data-type="service"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${this.app.CONFIG.APP_COLORS[dep?.image]}">${srv.name}</span></div>`;srvsUl.appendChild(srvLi);});srvsLi.appendChild(srvsUl);resourcesUl.appendChild(srvsLi);clusterLi.appendChild(resourcesUl);treeContainer.appendChild(clusterUl);treeContainer.scrollTop=scrollTop;}
+                _toggleTreeItemVisibility(element,isVisible){const{id,type}=element.dataset;let stateObject;let threeObj;if(type==='node')stateObject=this.app.clusterState.nodes.find(n=>n.id==id);if(type==='pod')stateObject=this.app.clusterState.pods[id];if(type==='deployment')stateObject=this.app.clusterState.deployments[id];if(type==='service')stateObject=this.app.clusterState.services[id];if(stateObject){stateObject.isVisible=isVisible;element.querySelector('.tree-eye').textContent=isVisible?'👁️':'👁️‍🗨️';if(type==='deployment')threeObj=this.app.threeObjects.get(`dep-${id}`);else if(type==='service')threeObj=this.app.threeObjects.get(`srv-${id}`);else threeObj=this.app.threeObjects.get(stateObject.id);if(threeObj){threeObj.visible=isVisible;threeObj.traverse(child=>{if(child.isCSS2DObject)child.visible=isVisible;});if(type==='deployment'){const srv=Object.values(this.app.clusterState.services).find(s=>s.deploymentId==id);if(srv){srv.isVisible=isVisible;const srvEye=document.querySelector(`.tree-item[data-id="${srv.id}"]`);if(srvEye)this._toggleTreeItemVisibility(srvEye,isVisible);}}if(type==='node'){const node=stateObject;node.pods.forEach(podId=>{const pod=this.app.clusterState.pods[podId];if(pod){pod.isVisible=isVisible;const podEye=document.querySelector(`.tree-item[data-id="${pod.id}"]`);if(podEye)this._toggleTreeItemVisibility(podEye,isVisible);}});}if(type==='service'){const srv=stateObject;srv.networkLines.forEach(line=>line.visible=isVisible);}}}}
+                showAddNodeModal(){const modal=document.getElementById('modal-overlay');const input=document.getElementById('new-node-name-input');const workerCount=this.app.clusterState.nodes.filter(n=>n.type==='worker').length;input.value=`worker-node-${workerCount+1}`;modal.style.display='flex';input.focus();}
+                hideAddNodeModal(){document.getElementById('modal-overlay').style.display='none';}
+            }
+
+            const app = new KubernetesExplorer();
+            app.init();
+        });
+    </script>
+</body>
+</html>

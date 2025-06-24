@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Kubernetes Cluster Explorer (3D Freedom Edition)</title>
+    <style>
+        :root {
+            --master-node: #2E7D32; --master-core: #66BB6A;
+            --worker-node: #455A64;
+            --pod-running: #4CAF50; --pod-pending: #FFC107; --pod-failed: #F44336;
+            --pipe: #00BCD4; --particle: #FFFFFF;
+            --ui-bg: #263238; --ui-text: #ECEFF1; --ui-accent: #00BCD4; --ui-border: #37474F;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0;
+            background-color: #1a1a1a; color: var(--ui-text); overflow: hidden; display: flex;
+        }
+
+        #cluster-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; cursor: grab; }
+        #cluster-container:active { cursor: grabbing; }
+        
+        .label {
+            color: var(--ui-text); background: rgba(0, 0, 0, 0.7); padding: 5px 10px;
+            border-radius: 5px; font-size: 14px; pointer-events: none;
+        }
+
+        .panel {
+            background-color: var(--ui-bg); box-shadow: 0 0 15px rgba(0, 0, 0, 0.5); z-index: 10;
+            display: flex; flex-direction: column; transition: transform 0.3s ease-in-out;
+        }
+
+        #top-bar {
+            position: fixed; top: 0; left: 0; width: 100%; height: 50px; background-color: var(--ui-bg);
+            border-bottom: 2px solid var(--ui-border); display: flex; align-items: center;
+            padding: 0 20px; box-sizing: border-box; gap: 15px; z-index: 20;
+        }
+
+        #left-sidebar {
+            position: fixed; top: 50px; left: 0; width: 320px; height: calc(100vh - 50px - 80px);
+            padding: 20px; border-right: 2px solid var(--ui-border); overflow-y: auto;
+        }
+        
+        #right-panel {
+            position: fixed; top: 50px; right: 0; width: 320px; height: calc(100vh - 50px);
+            padding: 20px; border-left: 2px solid var(--ui-border); transform: translateX(105%);
+        }
+        #right-panel.visible { transform: translateX(0); }
+
+        #event-log {
+            position: fixed; bottom: 0; left: 322px; width: calc(100% - 322px); height: 80px;
+            background-color: rgba(38, 50, 56, 0.9); border-top: 2px solid var(--ui-border);
+            padding: 10px; box-sizing: border-box; overflow-y: auto;
+            font-family: 'Courier New', Courier, monospace; font-size: 12px;
+        }
+        #event-log p { margin: 2px 0; white-space: nowrap; }
+
+        h2, h3 { color: var(--ui-accent); margin-top: 0; border-bottom: 1px solid var(--ui-border); padding-bottom: 10px; }
+        h3 .subtitle { font-size: 14px; color: var(--ui-text); font-weight: normal; display: block; margin-top: 4px; }
+
+        button {
+            background-color: var(--ui-accent); color: var(--ui-bg); border: none; padding: 10px 15px;
+            border-radius: 4px; cursor: pointer; font-weight: bold; transition: background-color 0.2s;
+        }
+        button:hover { background-color: #00acc1; }
+        button.danger { background-color: var(--pod-failed); color: var(--ui-text); }
+        
+        .info-card { background-color: var(--ui-border); padding: 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; }
+        .info-card h4, .info-card h5 { margin: 0 0 10px 0; color: var(--ui-text); }
+        .info-card p { margin: 5px 0; }
+        .info-card .explanation { font-style: italic; color: #B0BEC5; font-size: 13px; margin-top: 10px; border-left: 3px solid var(--ui-accent); padding-left: 10px; }
+        
+        .gauge-container { width: 100%; height: 20px; background-color: #546E7A; border-radius: 10px; margin-top: 5px; overflow: hidden; }
+        .gauge-bar { height: 100%; border-radius: 10px; transition: width 0.5s ease-out; text-align: right; padding-right: 5px; box-sizing: border-box; color: white; font-size: 12px; line-height: 20px; }
+        .cpu-bar { background-color: #2196F3; } .mem-bar { background-color: var(--pod-running); }
+
+        .tooltip { position: absolute; background: rgba(0,0,0,0.8); color: white; padding: 8px 12px; border-radius: 4px; display: none; pointer-events: none; z-index: 100; max-width: 250px; }
+
+        #welcome-panel {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 550px; background: rgba(38, 50, 56, 0.95);
+            border: 2px solid var(--ui-accent); border-radius: 10px;
+            padding: 30px; z-index: 1000; box-shadow: 0 0 25px rgba(0,0,0,0.7);
+        }
+        .legend-item { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; }
+        .legend-icon { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
+        #close-welcome-btn { display: block; margin: 20px auto 0; }
+        
+        .status-legend { list-style: none; padding: 0; margin-top: 10px; display: flex; gap: 15px; }
+        .status-legend li::before { content: '●'; display: inline-block; margin-right: 5px; }
+        .status-legend .running::before { color: var(--pod-running); }
+        .status-legend .pending::before { color: var(--pod-pending); }
+        .status-legend .failed::before { color: var(--pod-failed); }
+
+    </style>
+</head>
+<body>
+
+    <div id="cluster-container"></div>
+    <div class="tooltip" id="tooltip"></div>
+
+    <div id="welcome-panel">
+        <h2>Welcome to the Kubernetes Explorer!</h2>
+        <p>This is a live 3D simulation of a Kubernetes cluster. Use the controls on the left to deploy applications and manage your cluster.</p>
+        <p class="explanation">
+            <b>Explore the View:</b><br>
+            - <b>Rotate:</b> Left-click & drag, or drag with one finger.<br>
+            - <b>Zoom:</b> Use the mouse wheel or pinch with two fingers.<br>
+            - <b>Pan/Move:</b> Right-click & drag, or drag with two fingers.
+        </p>
+        <button id="close-welcome-btn">Let's Go!</button>
+    </div>
+
+    <div id="top-bar">
+        <button id="add-worker-btn" data-tooltip="Add another Worker Platform to the cluster, increasing its capacity for apps.">Add Worker Platform</button>
+        <button id="remove-worker-btn" data-tooltip="Remove the last Worker Platform. The Control Tower will move its apps elsewhere.">Remove Worker Platform</button>
+        <button id="pause-btn">Pause</button>
+    </div>
+
+    <div id="left-sidebar" class="panel">
+        <div class="control-group">
+            <h3>Cluster Overview</h3>
+            <div class="info-card" id="cluster-stats">
+                <p>Platforms: <span id="node-count-str">1 Control Tower, 1 Worker</span></p>
+                <p>Application Instances (Pods): <span id="pod-count">0</span></p>
+                <ul class="status-legend"><li class="running">Running</li><li class="pending">Pending</li><li class="failed">Failed</li></ul>
+                <label>Overall Cluster 'Busyness' (CPU):</label>
+                <div class="gauge-container"><div class="gauge-bar cpu-bar" id="total-cpu-gauge" style="width: 0%;"></div></div>
+                <label>Overall Cluster Memory Usage:</label>
+                <div class="gauge-container"><div class="gauge-bar mem-bar" id="total-mem-gauge" style="width: 0%;"></div></div>
+            </div>
+        </div>
+        <div class="control-group">
+            <h3>Deploy an Application
+                <span class="subtitle">(Blueprint for your Apps)</span>
+            </h3>
+            <div class="info-card">
+                <label for="image-select" data-tooltip="An 'Image' is a pre-packaged bundle of an application, like 'nginx' for a web server. It's the 'what' to run.">Container Image:</label>
+                <select id="image-select">
+                    <option value="nginx" data-cpu="100" data-mem="128">nginx (small web server)</option>
+                    <option value="redis" data-cpu="200" data-mem="256">redis (medium database)</option>
+                    <option value="postgres" data-cpu="500" data-mem="512">postgres (large database)</option>
+                </select>
+                <br><br>
+                <label for="replica-slider">How many copies to run? <span id="replica-count-label">3</span></label>
+                <div class="slider-group"><span>1</span><input type="range" id="replica-slider" min="1" max="10" value="3"><span>10</span></div>
+                <p class="explanation">Running multiple copies makes your app reliable. If one fails, another is ready to take its place.</p>
+                <br>
+                <button id="create-deployment-btn">Deploy Application</button>
+            </div>
+        </div>
+        <div class="control-group">
+            <h3>Active Applications</h3>
+            <div id="deployment-list"></div>
+        </div>
+    </div>
+
+    <div id="right-panel" class="panel">
+        <h3 id="inspector-title">Inspector</h3>
+        <div id="inspector-content"><p>Click on any object in the cluster to see its details here.</p></div>
+        <button id="close-inspector-btn" style="position:absolute; top:10px; right:10px;">X</button>
+    </div>
+
+    <div id="event-log"><p>[INFO] Control Tower online. Awaiting commands.</p></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            const CONFIG = {
+                NODE_WIDTH: 5, NODE_HEIGHT: 0.4, NODE_DEPTH: 7, POD_SIZE: 0.4,
+                TOWER_RADIUS: 1.5, TOWER_HEIGHT: 3,
+                MAX_NODES: 5, MAX_PODS_PER_NODE: 20, WORKER_SPACING: 3,
+                WORKER_CPU: 4000, WORKER_MEM: 8192,
+                COLORS: { MASTER_NODE: 0x2E7D32, MASTER_CORE: 0x66BB6A, WORKER_NODE: 0x455A64, POD_RUNNING: 0x4CAF50, POD_PENDING: 0xFFC107, POD_FAILED: 0xF44336, PIPE: 0x00BCD4, PARTICLE: 0xFFFFFF }
+            };
+
+            const clusterState = { nodes: [], pods: {}, deployments: {}, traffic: [], isPaused: false, nextId: 0 };
+            let scene, camera, renderer, controls, raycaster, mouse, labelRenderer;
+            const threeObjects = new Map();
+
+            function initThree() {
+                const container = document.getElementById('cluster-container');
+                scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x1a1a1a);
+                scene.fog = new THREE.Fog(0x1a1a1a, 40, 100);
+
+                // --- CAMERA CHANGE: From Orthographic to Perspective ---
+                camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+                camera.position.set(10, 15, 20);
+
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                container.appendChild(renderer.domElement);
+
+                labelRenderer = new THREE.CSS2DRenderer();
+                labelRenderer.setSize(window.innerWidth, window.innerHeight);
+                labelRenderer.domElement.style.position = 'absolute';
+                labelRenderer.domElement.style.top = '0px';
+                container.appendChild(labelRenderer.domElement);
+                
+                // --- ORBIT CONTROLS CONFIGURATION ---
+                controls = new THREE.OrbitControls(camera, labelRenderer.domElement); // Use labelRenderer so UI clicks don't interfere
+                controls.enableDamping = true; // Makes movement smooth
+                controls.dampingFactor = 0.05;
+                controls.minDistance = 10;     // How close you can zoom
+                controls.maxDistance = 70;     // How far you can zoom
+                controls.target.set(0, 2, -5); // Set the initial "look at" point
+                
+                const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+                scene.add(ambient);
+                const light = new THREE.DirectionalLight(0xffffff, 0.7);
+                light.position.set(10, 20, 5);
+                scene.add(light);
+                
+                raycaster = new THREE.Raycaster();
+                mouse = new THREE.Vector2();
+
+                window.addEventListener('resize', onWindowResize, false);
+                container.addEventListener('click', onObjectClick, false);
+            }
+            
+            function getNextId() { return clusterState.nextId++; }
+
+            function addNode(type) {
+                if (clusterState.nodes.length >= CONFIG.MAX_NODES) { logEvent('Cluster at maximum platform capacity.', 'WARN'); return; }
+                const id = getNextId();
+                const node = { id, type, pods: new Set(), cpu: { usage: 0 }, memory: { usage: 0 }, isFailing: false };
+                if (type === 'worker') {
+                    node.cpu.capacity = CONFIG.WORKER_CPU;
+                    node.memory.capacity = CONFIG.WORKER_MEM;
+                }
+                clusterState.nodes.push(node);
+                createNodeVisual(node);
+                logEvent(`${type === 'master' ? 'Control Tower' : `Worker Platform ${id}`} is online.`);
+                updateClusterOverview();
+            }
+
+            function removeLastWorkerNode() {
+                const workers = clusterState.nodes.filter(n => n.type === 'worker');
+                if (workers.length === 0) { logEvent('No worker platforms to remove.', 'WARN'); return; }
+                const nodeToRemove = workers[workers.length - 1];
+                failNode(nodeToRemove.id, true);
+                
+                setTimeout(() => {
+                    clusterState.nodes = clusterState.nodes.filter(n => n.id !== nodeToRemove.id);
+                    const mesh = threeObjects.get(nodeToRemove.id);
+                    if (mesh) {
+                        // Clean up all associated objects
+                        scene.remove(mesh);
+                        if (mesh.label) scene.remove(mesh.label);
+                        if (mesh.pipe) scene.remove(mesh.pipe);
+                        threeObjects.delete(nodeToRemove.id);
+                        
+                        // Clean up particles
+                        const particlesToRemove = clusterState.traffic.filter(t => t.nodeId === nodeToRemove.id);
+                        particlesToRemove.forEach(p => scene.remove(p.mesh));
+                        clusterState.traffic = clusterState.traffic.filter(t => t.nodeId !== nodeToRemove.id);
+                    }
+                    logEvent(`Worker Platform ${nodeToRemove.id} fully decommissioned.`, 'INFO');
+                    updateClusterOverview();
+                    repositionNodes();
+                }, 3000);
+            }
+            
+            // --- Core Logic (Unchanged from previous versions) ---
+            const createDeployment = () => {
+                const imageSelect = document.getElementById('image-select');
+                const selectedOption = imageSelect.options[imageSelect.selectedIndex];
+                const replicaCount = parseInt(document.getElementById('replica-slider').value, 10);
+                const deploymentId = getNextId();
+                clusterState.deployments[deploymentId] = { id: deploymentId, name: `${selectedOption.value}-app-${deploymentId}`, replicas: replicaCount, image: selectedOption.value, cpuRequest: parseInt(selectedOption.dataset.cpu, 10), memRequest: parseInt(selectedOption.dataset.mem, 10), podIds: new Set() };
+                logEvent(`New application blueprint '${clusterState.deployments[deploymentId].name}' created. Goal: ${replicaCount} copies.`);
+                updateDeploymentList();
+            };
+            const scaleDeployment = (id, reps) => { 
+                const deployment = clusterState.deployments[id]; if (!deployment) return;
+                logEvent(`Scaling '${deployment.name}' from ${deployment.replicas} to ${reps} copies.`);
+                deployment.replicas = reps;
+                updateDeploymentList();
+            };
+            const terminatePod = (podId, reason) => { 
+                const pod = clusterState.pods[podId]; if (!pod) return;
+                const podMesh = threeObjects.get(podId);
+                if (podMesh) { new TWEEN.Tween(podMesh.scale).to({ x:0.01,y:0.01,z:0.01},500).easing(TWEEN.Easing.Quadratic.In).onComplete(()=>podMesh.parent.remove(podMesh)).start(); }
+                if(pod.nodeId !== null) { const node = clusterState.nodes.find(n=>n.id===pod.nodeId); if(node){node.pods.delete(podId); recalculateNodeResources(node);}}
+                const dep = clusterState.deployments[pod.deploymentId]; if(dep) dep.podIds.delete(podId);
+                delete clusterState.pods[podId];
+                logEvent(`App instance (Pod ${pod.id}) was ${reason}.`);
+                updateClusterOverview();
+            };
+            const failNode = (nodeId, isRemoval) => { 
+                const node = clusterState.nodes.find(n => n.id === nodeId);
+                if (!node || node.type === 'master') return;
+                node.isFailing = true;
+                const nodeMesh = threeObjects.get(nodeId);
+                if (nodeMesh) { nodeMesh.material.color.set(CONFIG.COLORS.POD_FAILED); }
+                logEvent(`Worker Platform ${node.id} is failing! Evacuating apps...`, 'ERROR');
+                Array.from(node.pods).forEach(podId => {
+                    const pod = clusterState.pods[podId]; if(!pod) return;
+                    pod.status = 'Pending'; pod.nodeId = null;
+                    const podMesh = threeObjects.get(podId);
+                    if(podMesh) { podMesh.material.color.set(CONFIG.COLORS.POD_PENDING); scene.attach(podMesh); }
+                });
+                node.pods.clear(); recalculateNodeResources(node);
+                if(isRemoval) return;
+                setTimeout(() => { node.isFailing = false; if(nodeMesh) nodeMesh.material.color.set(CONFIG.COLORS.WORKER_NODE); logEvent(`Worker Platform ${node.id} has recovered.`, 'INFO'); }, 10000);
+            };
+            const killPod = (podId) => {
+                const pod = clusterState.pods[podId]; if (!pod) return;
+                pod.status = 'Failed';
+                const podMesh = threeObjects.get(podId); if(podMesh) podMesh.material.color.set(CONFIG.COLORS.POD_FAILED);
+                logEvent(`App instance (Pod ${pod.id}) killed! Control Tower will replace it.`, 'WARN');
+                setTimeout(() => { if (clusterState.pods[podId]?.status === 'Failed') terminatePod(podId, "cleaned up"); }, 2000);
+            };
+            
+            const findSchedulableNode = (cpu, mem) => clusterState.nodes.filter(n => n.type === 'worker' && !n.isFailing && (n.cpu.usage + cpu <= n.cpu.capacity) && (n.memory.usage + mem <= n.memory.capacity) && (n.pods.size < CONFIG.MAX_PODS_PER_NODE)).sort((a,b) => a.pods.size - b.pods.size)[0];
+            function reconciliationLoop() {
+                if (clusterState.isPaused) return;
+                Object.values(clusterState.deployments).forEach(dep => {
+                    const current = Array.from(dep.podIds).map(id => clusterState.pods[id]).filter(Boolean);
+                    if (current.length > dep.replicas) { terminatePod(current[current.length - 1].id, "scaled down"); }
+                    else if (current.length < dep.replicas) {
+                        const id = getNextId();
+                        clusterState.pods[id] = { id, deploymentId: dep.id, name: `${dep.name}-pod-${id}`, status: 'Pending', nodeId: null, cpuRequest: dep.cpuRequest, memRequest: dep.memRequest };
+                        dep.podIds.add(id); logEvent(`Need a new instance for '${dep.name}'. Status: Pending.`);
+                    }
+                });
+                Object.values(clusterState.pods).filter(p => p.status === 'Pending').forEach(pod => {
+                    const node = findSchedulableNode(pod.cpuRequest, pod.memRequest);
+                    if(node) {
+                        pod.status = 'Running'; pod.nodeId = node.id; node.pods.add(pod.id);
+                        recalculateNodeResources(node); createPodVisual(pod, node);
+                        logEvent(`Control Tower assigned Pod ${pod.id} to Platform ${node.id}.`);
+                    }
+                });
+                updateClusterOverview();
+            }
+
+            function createNodeVisual(node) {
+                let mesh;
+                if (node.type === 'master') {
+                    const group = new THREE.Group();
+                    const towerGeom = new THREE.CylinderGeometry(CONFIG.TOWER_RADIUS, CONFIG.TOWER_RADIUS, CONFIG.TOWER_HEIGHT, 6);
+                    const towerMat = new THREE.MeshLambertMaterial({ color: CONFIG.COLORS.MASTER_NODE, transparent: true, opacity: 0.8 });
+                    const towerMesh = new THREE.Mesh(towerGeom, towerMat);
+                    towerMesh.position.y = CONFIG.TOWER_HEIGHT / 2;
+                    
+                    const coreGeom = new THREE.CylinderGeometry(CONFIG.TOWER_RADIUS * 0.6, CONFIG.TOWER_RADIUS * 0.6, CONFIG.TOWER_HEIGHT, 6);
+                    const coreMat = new THREE.MeshLambertMaterial({ color: CONFIG.COLORS.MASTER_CORE });
+                    const coreMesh = new THREE.Mesh(coreGeom, coreMat);
+                    coreMesh.position.y = CONFIG.TOWER_HEIGHT / 2;
+                    node.coreMesh = coreMesh;
+                    
+                    group.add(towerMesh);
+                    group.add(coreMesh);
+                    mesh = group;
+                    const label = createHtmlLabel("Control Tower", new THREE.Vector3(0, CONFIG.TOWER_HEIGHT + 0.5, 0));
+                    mesh.add(label);
+                    mesh.label = label;
+                } else {
+                    const geom = new THREE.BoxGeometry(CONFIG.NODE_WIDTH, CONFIG.NODE_HEIGHT, CONFIG.NODE_DEPTH);
+                    const mat = new THREE.MeshLambertMaterial({ color: CONFIG.COLORS.WORKER_NODE });
+                    mesh = new THREE.Mesh(geom, mat);
+                    const label = createHtmlLabel(`Worker Platform ${node.id}`, new THREE.Vector3(0, CONFIG.NODE_HEIGHT + 0.5, 0));
+                    mesh.add(label);
+                    mesh.label = label;
+                    
+                    const master = clusterState.nodes.find(n => n.type === 'master');
+                    const masterMesh = threeObjects.get(master.id);
+                    if (masterMesh) {
+                        const curve = new THREE.CatmullRomCurve3([ masterMesh.position.clone().setY(1), mesh.position.clone().setY(1) ]);
+                        const pipeGeom = new THREE.TubeGeometry(curve, 20, 0.1, 8, false);
+                        const pipeMat = new THREE.MeshBasicMaterial({ color: CONFIG.COLORS.PIPE });
+                        const pipeMesh = new THREE.Mesh(pipeGeom, pipeMat);
+                        mesh.pipe = pipeMesh;
+                        scene.add(pipeMesh);
+                        
+                        for(let i=0; i<3; i++) {
+                            const particle = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), new THREE.MeshBasicMaterial({ color: CONFIG.COLORS.PARTICLE }));
+                            clusterState.traffic.push({ mesh: particle, path: curve, progress: i * 0.33, nodeId: node.id });
+                            scene.add(particle);
+                        }
+                    }
+                }
+                mesh.userData = { id: node.id, type: 'node' };
+                scene.add(mesh);
+                threeObjects.set(node.id, mesh);
+                repositionNodes();
+            }
+
+            function repositionNodes() {
+                const workers = clusterState.nodes.filter(n => n.type === 'worker');
+                const master = clusterState.nodes.find(n => n.type === 'master');
+                if(master) threeObjects.get(master.id).position.set(0, 0, 0);
+
+                workers.forEach((node, i) => {
+                    const mesh = threeObjects.get(node.id);
+                    if (mesh) {
+                        mesh.position.set(
+                            (i % 2 === 0 ? -1 : 1) * (CONFIG.NODE_WIDTH / 1.5),
+                            0,
+                            -CONFIG.NODE_DEPTH -1 + (Math.floor(i/2) * -(CONFIG.NODE_DEPTH + CONFIG.WORKER_SPACING))
+                        );
+                        if (mesh.pipe) {
+                           const masterMesh = threeObjects.get(master.id);
+                           const newPath = new THREE.CatmullRomCurve3([ masterMesh.position.clone().setY(1), mesh.position.clone().setY(1) ]);
+                           mesh.pipe.geometry.dispose();
+                           mesh.pipe.geometry = new THREE.TubeGeometry(newPath, 20, 0.1, 8, false);
+                           clusterState.traffic.filter(t => t.nodeId === node.id).forEach(t => t.path = newPath);
+                        }
+                    }
+                });
+            }
+
+            const createPodVisual = (pod, node) => { 
+                const nodeMesh = threeObjects.get(node.id); if (!nodeMesh) return;
+                const geom = new THREE.CylinderGeometry(CONFIG.POD_SIZE/2, CONFIG.POD_SIZE/2, CONFIG.POD_SIZE, 6);
+                const mat = new THREE.MeshLambertMaterial({ color: pod.status === 'Running' ? CONFIG.COLORS.POD_RUNNING : CONFIG.COLORS.POD_PENDING });
+                const podMesh = new THREE.Mesh(geom, mat);
+                const podIndex = node.pods.size - 1;
+                const podsPerRow = Math.floor(CONFIG.NODE_WIDTH / (CONFIG.POD_SIZE * 1.5));
+                podMesh.position.set((podIndex % podsPerRow * CONFIG.POD_SIZE * 1.5) - (CONFIG.NODE_WIDTH/2) + CONFIG.POD_SIZE, CONFIG.NODE_HEIGHT/2 + CONFIG.POD_SIZE/2, (Math.floor(podIndex / podsPerRow) * CONFIG.POD_SIZE * 1.5) - (CONFIG.NODE_DEPTH/2) + CONFIG.POD_SIZE);
+                podMesh.userData = { id: pod.id, type: 'pod' }; podMesh.scale.set(0.01, 0.01, 0.01);
+                nodeMesh.add(podMesh); threeObjects.set(pod.id, podMesh);
+                new TWEEN.Tween(podMesh.scale).to({x:1,y:1,z:1},500).easing(TWEEN.Easing.Elastic.Out).start();
+            };
+            const recalculateNodeResources = (node) => {
+                node.cpu.usage = 0; node.memory.usage = 0;
+                node.pods.forEach(podId => { const pod = clusterState.pods[podId]; if (pod) { node.cpu.usage += pod.cpuRequest; node.memory.usage += pod.memRequest; }});
+            };
+            const createHtmlLabel = (text, pos) => { const div=document.createElement('div'); div.className='label'; div.textContent=text; const label=new THREE.CSS2DObject(div); label.position.copy(pos); return label; };
+            
+            function animate() {
+                requestAnimationFrame(animate);
+                if (clusterState.isPaused) return;
+                
+                const time = Date.now() * 0.001;
+                const master = clusterState.nodes.find(n => n.type === 'master');
+                if (master && master.coreMesh) {
+                    master.coreMesh.material.emissive.setHex(CONFIG.COLORS.MASTER_CORE);
+                    master.coreMesh.material.emissiveIntensity = Math.sin(time * 3) * 0.4 + 0.6;
+                }
+
+                clusterState.traffic.forEach(particle => {
+                    particle.progress += 0.005;
+                    if (particle.progress >= 1) particle.progress = 0;
+                    particle.path.getPointAt(particle.progress, particle.mesh.position);
+                });
+
+                TWEEN.update();
+                controls.update(); // Important for damping
+                renderer.render(scene, camera);
+                labelRenderer.render(scene, camera);
+            }
+            
+            // --- UI and Event Handlers (Largely unchanged) ---
+            function initUI() {
+                document.getElementById('add-worker-btn').addEventListener('click', () => addNode('worker'));
+                document.getElementById('remove-worker-btn').addEventListener('click', removeLastWorkerNode);
+                document.getElementById('pause-btn').addEventListener('click', togglePause);
+                document.getElementById('create-deployment-btn').addEventListener('click', createDeployment);
+                document.getElementById('replica-slider').addEventListener('input', e => { document.getElementById('replica-count-label').textContent = e.target.value; });
+                document.getElementById('close-inspector-btn').addEventListener('click', hideInspector);
+                document.getElementById('close-welcome-btn').addEventListener('click', () => { document.getElementById('welcome-panel').style.display = 'none'; });
+                document.querySelectorAll('[data-tooltip]').forEach(el => { el.addEventListener('mouseenter', showTooltip); el.addEventListener('mouseleave', hideTooltip); });
+            }
+            function onWindowResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight); 
+                labelRenderer.setSize(window.innerWidth, window.innerHeight);
+            }
+            function onObjectClick(event) {
+                const canvasBounds = renderer.domElement.getBoundingClientRect();
+                mouse.x = ((event.clientX - canvasBounds.left) / canvasBounds.width) * 2 - 1;
+                mouse.y = -((event.clientY - canvasBounds.top) / canvasBounds.height) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera); const intersects = raycaster.intersectObjects(scene.children, true);
+                if (intersects.length > 0 && intersects[0].distance < controls.target.distanceTo(camera.position)) { // Ensure click isn't behind UI
+                    let clickedObject = intersects[0].object;
+                    while (clickedObject.parent && !clickedObject.userData.id) clickedObject = clickedObject.parent;
+                    const { id, type } = clickedObject.userData;
+                    if (id !== undefined) {
+                        if (type === 'node') showNodeInspector(id);
+                        if (type === 'pod') showPodInspector(id);
+                    }
+                } else {
+                    hideInspector();
+                }
+            }
+            function togglePause() { clusterState.isPaused = !clusterState.isPaused; document.getElementById('pause-btn').textContent = clusterState.isPaused ? 'Resume' : 'Pause'; logEvent(`Simulation ${clusterState.isPaused ? 'paused' : 'resumed'}.`, 'INFO'); }
+            function logEvent(message, level = 'INFO') {
+                const logEl = document.getElementById('event-log'); const p = document.createElement('p'); const time = new Date().toLocaleTimeString();
+                p.textContent = `[${time}] [${level}] ${message}`; if (level === 'WARN') p.style.color = 'var(--pod-pending)'; if (level === 'ERROR') p.style.color = 'var(--pod-failed)';
+                logEl.prepend(p); if (logEl.children.length > 50) logEl.removeChild(logEl.lastChild);
+            }
+            function showNodeInspector(nodeId) {
+                const node = clusterState.nodes.find(n => n.id === nodeId); if (!node) return;
+                const panel = document.getElementById('right-panel');
+                document.getElementById('inspector-title').textContent = `Inspecting ${node.type === 'master' ? 'Control Tower' : `Platform ${node.id}`}`;
+                const explanation = node.type === 'master'
+                    ? "This is the <b>Control Tower</b> (Master Node), the 'brain' of the cluster. Its pulsing core signifies it's always working: making decisions, sending commands via the control pipes, and ensuring the cluster matches your desired state. It does not run your apps directly."
+                    : "This is a <b>Worker Platform</b> (Worker Node). It's a server that receives commands from the Control Tower and does the actual work of running your applications inside Pods. You can add more platforms to handle more apps.";
+                document.getElementById('inspector-content').innerHTML = `<div class="info-card"><h5>What is this?</h5><p class="explanation">${explanation}</p></div>`;
+                if (node.type === 'worker') {
+                    const cpuUsage = ((node.cpu.usage / node.cpu.capacity) * 100).toFixed(1); const memUsage = ((node.memory.usage / node.memory.capacity) * 100).toFixed(1);
+                    document.getElementById('inspector-content').innerHTML += `<div class="info-card"><h4>Status: <span style="color:${node.isFailing ? 'var(--pod-failed)' : 'var(--pod-running)'}">${node.isFailing ? 'Failing' : 'Healthy'}</span></h4><p>Apps Running: ${node.pods.size} / ${CONFIG.MAX_PODS_PER_NODE}</p><label>CPU Usage:</label><div class="gauge-container"><div class="gauge-bar cpu-bar" style="width: ${cpuUsage}%;">${cpuUsage}%</div></div><label>Memory Usage:</label><div class="gauge-container"><div class="gauge-bar mem-bar" style="width: ${memUsage}%;">${memUsage}%</div></div><br><button class="danger" onclick="window.sim.failNode(${node.id})">Simulate Platform Failure</button></div>`;
+                }
+                panel.classList.add('visible');
+            }
+            function showPodInspector(podId) {
+                const pod = clusterState.pods[podId]; if (!pod) return;
+                const panel = document.getElementById('right-panel'); document.getElementById('inspector-title').textContent = `Inspecting Pod ${pod.id}`;
+                const statusColor = { Running: 'var(--pod-running)', Pending: 'var(--pod-pending)', Failed: 'var(--pod-failed)' }[pod.status];
+                document.getElementById('inspector-content').innerHTML = `<div class="info-card"><h5>What is this?</h5><p class="explanation">This is a <b>Pod</b>, a single running instance of your application. The Control Tower commands a Worker Platform to create a Pod from your application blueprint. If it fails, the Tower will command a replacement to be built automatically.</p></div><div class="info-card"><h4>Status: <span style="color:${statusColor}">${pod.status}</span></h4><p>Running on: ${pod.nodeId !== null ? `Platform ${pod.nodeId}` : 'Nowhere (waiting for assignment)'}</p><h5>Resource Needs</h5><p>CPU: ${pod.cpuRequest}m | Memory: ${pod.memRequest}Mi</p><br><button class="danger" onclick="window.sim.killPod(${pod.id})">Kill This Instance</button></div>`;
+                panel.classList.add('visible');
+            }
+            function hideInspector() { document.getElementById('right-panel').classList.remove('visible'); }
+            function updateClusterOverview() {
+                const workers = clusterState.nodes.filter(n => n.type === 'worker').length;
+                document.getElementById('node-count-str').textContent = `1 Tower, ${workers} Worker${workers !== 1 ? 's' : ''}`;
+                document.getElementById('pod-count').textContent = Object.keys(clusterState.pods).length;
+                let cpuU=0, cpuC=0, memU=0, memC=0;
+                clusterState.nodes.filter(n=>n.type==='worker').forEach(n => { cpuU+=n.cpu.usage; cpuC+=n.cpu.capacity; memU+=n.memory.usage; memC+=n.memory.capacity; });
+                const cpuP = cpuC > 0 ? (cpuU/cpuC*100).toFixed(1):0; const memP = memC > 0 ? (memU/memC*100).toFixed(1):0;
+                const cpuGauge = document.getElementById('total-cpu-gauge'); cpuGauge.style.width = `${cpuP}%`; cpuGauge.textContent = `${cpuP}%`;
+                const memGauge = document.getElementById('total-mem-gauge'); memGauge.style.width = `${memP}%`; memGauge.textContent = `${memP}%`;
+            }
+            function updateDeploymentList() {
+                const listEl = document.getElementById('deployment-list'); listEl.innerHTML = '';
+                Object.values(clusterState.deployments).forEach(dep => {
+                    const running = Array.from(dep.podIds).filter(id => clusterState.pods[id]?.status === 'Running').length;
+                    const depEl = document.createElement('div'); depEl.className = 'info-card';
+                    depEl.innerHTML = `<h4>${dep.name}</h4><p>Status: ${running} of ${dep.replicas} copies are running.</p><label>Goal: <span class="replica-value">${dep.replicas}</span></label><input type="range" min="0" max="10" value="${dep.replicas}" oninput="this.previousElementSibling.querySelector('.replica-value').textContent = this.value" onchange="window.sim.scaleDeployment(${dep.id}, parseInt(this.value, 10))">`;
+                    listEl.appendChild(depEl);
+                });
+            }
+            const tooltip = document.getElementById('tooltip');
+            function showTooltip(e) { tooltip.style.display='block'; tooltip.innerHTML=e.target.dataset.tooltip; document.addEventListener('mousemove', moveTooltip); }
+            function hideTooltip() { tooltip.style.display='none'; document.removeEventListener('mousemove', moveTooltip); }
+            function moveTooltip(e) { tooltip.style.left=`${e.clientX+15}px`; tooltip.style.top=`${e.clientY+15}px`; }
+
+            // --- INITIALIZATION ---
+            initThree(); initUI();
+            window.sim = { scaleDeployment, killPod, failNode };
+            addNode('master'); addNode('worker');
+            animate(); setInterval(reconciliationLoop, 1000);
+        });
+    </script>
+</body>
+</html>
