@@ -234,7 +234,7 @@
         #bottom-panel {
             position: fixed;
             bottom: 0;
-            left: 0;
+            left: 320px;
             right: 0;
             height: 100px;
             background: rgba(38, 50, 56, 0.85);
@@ -614,8 +614,8 @@
         </div>
     </div>
     <div id="top-bar">
-        <button id="add-worker-btn">Add Worker Node</button>
-        <button id="remove-worker-btn">Remove Worker Node</button>
+        <button id="add-worker-btn" data-label="Add Worker">Add Worker</button>
+        <button id="remove-worker-btn" data-label="Remove Worker">Remove Worker</button>
         <button id="pause-btn">Pause</button>
         <div style="margin-left:auto; display:flex; gap: 5px;">
             <button id="select-tool" class="tool-btn" title="Select Tool (S)">👆</button>
@@ -652,8 +652,8 @@
                     <option value="postgres" data-cpu="500" data-mem="512">postgres (large database)</option>
                 </select> <br><br> <label for="replica-slider">Replicas: <span id="replica-count-label">3</span></label>
                 <input type="range" id="replica-slider" min="1" max="10" value="3">
-                <p class="explanation">This tells the Deployment how many identical <b>Pods</b> (replicas) to keep
-                    running.</p> <br> <button id="create-deployment-btn">Deploy</button>
+                <p class="explanation" data-label="replicas-explanation">This tells the Deployment how many identical <b>Pods</b> (replicas) to keep
+                    running.</p> <br> <button id="create-deployment-btn" data-label="Create Deployment">Create Deployment</button>
             </div>
         </div>
         <div class="control-group">
@@ -663,14 +663,20 @@
         <div class="control-group">
             <h3>Create Service<span class="subtitle">(Network Layer)</span></h3>
             <div class="info-card"> 
-                <label for="service-name-input">Service Name:</label>
+                <label for="service-name-input" data-label="Service Name">Service Name:</label>
                 <input type="text" id="service-name-input" placeholder="my-service">
-                <label for="service-label-selector">Label Selector:</label>
+                <label for="service-type-selector" data-label="Service Type">Service Type:</label>
+                <select id="service-type-selector">
+                    <option value="ClusterIP" selected>ClusterIP (Internal only)</option>
+                    <option value="NodePort">NodePort (External via node ports)</option>
+                    <option value="LoadBalancer">LoadBalancer (External via cloud LB)</option>
+                </select>
+                <label for="service-label-selector" data-label="Label Selector">Label Selector:</label>
                 <select id="service-label-selector" multiple
                     style="min-height: 80px;">
                 </select>
-                <button id="create-service-btn">Create Service</button>
-                <p class="explanation">Services use label selectors to find pods. Select one or more labels from the dropdown.<br>Hold Ctrl/Cmd to select multiple labels.</p>
+                <button id="create-service-btn" data-label="Create Service">Create Service</button>
+                <p class="explanation" data-label="service-explanation">Services use label selectors to find pods. Select one or more labels from the dropdown.<br>Hold Ctrl/Cmd to select multiple labels.</p>
             </div>
         </div>
         <div class="control-group">
@@ -723,6 +729,34 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            
+            // Cookie functions
+            function setCookie(name, value, days) {
+                const expires = new Date();
+                expires.setTime(expires.getTime() + (days * 24 * 60 * 60 * 1000));
+                document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/`;
+            }
+            
+            function getCookie(name) {
+                const nameEQ = name + "=";
+                const ca = document.cookie.split(';');
+                for(let i = 0; i < ca.length; i++) {
+                    let c = ca[i];
+                    while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+                    if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+                }
+                return null;
+            }
+            
+            // Check if welcome has been shown before
+            const hasSeenWelcome = getCookie('k8sviz_welcome_shown');
+            if (!hasSeenWelcome) {
+                // Show welcome panel (it's visible by default in CSS)
+                setCookie('k8sviz_welcome_shown', 'true', 365); // Remember for 1 year
+            } else {
+                // Hide welcome panel immediately
+                document.getElementById('welcome-panel').style.display = 'none';
+            }
 
             const CONFIG = {
                 NODE_WIDTH_CPU_SCALE: 1 / 500, NODE_HEIGHT_MEM_SCALE: 1 / 1024 * 0.55, NODE_DEPTH_STORAGE: 8, POD_SCALE_FACTOR: 1 / 1024,
@@ -786,6 +820,7 @@
             function createService() {
                 const nameInput = document.getElementById('service-name-input');
                 const serviceName = nameInput.value.trim();
+                const serviceType = document.getElementById('service-type-selector').value;
                 
                 const select = document.getElementById('service-label-selector');
                 const selectedOptions = Array.from(select.selectedOptions);
@@ -804,14 +839,17 @@
                 const newSrv = {
                     id: srvId,
                     name: serviceName || `service-${srvId}`,  // Use custom name or default
+                    type: serviceType,
                     selector: selector,
                     isVisible: true,
-                    networkLines: []
+                    networkLines: [],
+                    nodePort: serviceType === 'NodePort' ? 30000 + Math.floor(Math.random() * 2768) : null, // Random NodePort 30000-32767
+                    trafficParticles: []
                 };
                 clusterState.services[srvId] = newSrv;
                 createServiceVisual(newSrv);
                 const selectorStr = Object.entries(selector).map(([k, v]) => `${k}=${v}`).join(', ');
-                logEvent(`Service '${newSrv.name}' created with selector: ${selectorStr}`);
+                logEvent(`${serviceType} Service '${newSrv.name}' created with selector: ${selectorStr}`);
                 updateServiceList();
                 renderHierarchy();
                 nameInput.value = '';  // Clear the input for next service
@@ -861,6 +899,60 @@
                     label.element.style.color = '#' + plane.color.toString(16).padStart(6, '0');
                     scene.add(label);
                 });
+                
+                // Create external traffic source (Internet cloud)
+                const internetGroup = new THREE.Group();
+                
+                // Create stylized cloud shape for internet
+                const internetMat = new THREE.MeshBasicMaterial({ 
+                    color: 0x4A90E2,
+                    transparent: true, 
+                    opacity: 0.6,
+                    side: THREE.DoubleSide 
+                });
+                
+                // Build cloud from spheres
+                const cloudPositions = [
+                    { x: 0, y: 0, z: 0, scale: 2 },
+                    { x: 1.5, y: 0, z: 0, scale: 1.5 },
+                    { x: -1.5, y: 0, z: 0, scale: 1.5 },
+                    { x: 0.8, y: 0, z: 1.2, scale: 1.3 },
+                    { x: -0.8, y: 0, z: 1.2, scale: 1.3 },
+                    { x: 0.8, y: 0, z: -1.2, scale: 1.3 },
+                    { x: -0.8, y: 0, z: -1.2, scale: 1.3 }
+                ];
+                
+                cloudPositions.forEach(pos => {
+                    const sphere = new THREE.Mesh(
+                        new THREE.SphereGeometry(0.8 * pos.scale, 16, 16),
+                        internetMat
+                    );
+                    sphere.position.set(pos.x, pos.y, pos.z);
+                    internetGroup.add(sphere);
+                });
+                
+                // Add world icon in center
+                const worldGeom = new THREE.SphereGeometry(1.2, 32, 16);
+                const worldMat = new THREE.MeshLambertMaterial({ 
+                    color: 0xFFFFFF,
+                    emissive: 0x4A90E2,
+                    emissiveIntensity: 0.3
+                });
+                const world = new THREE.Mesh(worldGeom, worldMat);
+                internetGroup.add(world);
+                
+                // Position above network plane
+                internetGroup.position.set(0, CONFIG.PLANES.NETWORK.y + 8, 15);
+                internetGroup.userData = { type: 'internet', id: 'internet' };
+                
+                // Add label
+                const internetLabel = createHtmlLabel('Internet', new THREE.Vector3(0, 2, 0));
+                internetLabel.element.style.fontSize = '16px';
+                internetLabel.element.style.fontWeight = 'bold';
+                internetGroup.add(internetLabel);
+                
+                scene.add(internetGroup);
+                threeObjects.set('internet', internetGroup);
             }
             function createHtmlLabel(text, pos) { const div = document.createElement('div'); div.className = 'label'; div.textContent = text; const label = new THREE.CSS2DObject(div); label.position.copy(pos); return label; }
 
@@ -912,7 +1004,95 @@
                     new THREE.Color(CONFIG.APP_COLORS[matchingPod.image] || CONFIG.APP_COLORS.default) :
                     new THREE.Color(CONFIG.COLORS.PIPE); // Default color if no pods match
 
-                const portalGeom = new THREE.TorusGeometry(1.5, .2, 16, 100); const portalMat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }); const portalMesh = new THREE.Mesh(portalGeom, portalMat); portalMesh.rotation.x = Math.PI / 2; portalMesh.userData = { id: srv.id, type: 'service' }; const label = createHtmlLabel(srv.name, new THREE.Vector3(0, 0.5, 0)); portalMesh.add(label); portalMesh.label = label; scene.add(portalMesh); threeObjects.set(`srv-${srv.id}`, portalMesh); recalculateServicePosition(srv);
+                let portalMesh;
+                const serviceType = srv.type || 'ClusterIP';
+                
+                if (serviceType === 'ClusterIP') {
+                    // Ring shape for ClusterIP (internal only)
+                    const portalGeom = new THREE.TorusGeometry(1.5, .2, 16, 100);
+                    const portalMat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
+                    portalMesh = new THREE.Mesh(portalGeom, portalMat);
+                    portalMesh.rotation.x = Math.PI / 2;
+                } else if (serviceType === 'NodePort') {
+                    // Box with port indicators for NodePort
+                    const group = new THREE.Group();
+                    const boxGeom = new THREE.BoxGeometry(2, 0.5, 2);
+                    const boxMat = new THREE.MeshBasicMaterial({ 
+                        color, 
+                        transparent: true, 
+                        opacity: 0.7,
+                        side: THREE.DoubleSide 
+                    });
+                    const box = new THREE.Mesh(boxGeom, boxMat);
+                    group.add(box);
+                    
+                    // Add port indicators on edges
+                    const portGeom = new THREE.SphereGeometry(0.2, 16, 16);
+                    const portMat = new THREE.MeshLambertMaterial({ 
+                        color: 0xFFFFFF,
+                        emissive: color,
+                        emissiveIntensity: 0.5
+                    });
+                    for (let i = 0; i < 4; i++) {
+                        const port = new THREE.Mesh(portGeom, portMat);
+                        const angle = (i / 4) * Math.PI * 2;
+                        port.position.set(Math.cos(angle) * 1.2, 0, Math.sin(angle) * 1.2);
+                        group.add(port);
+                    }
+                    portalMesh = group;
+                } else if (serviceType === 'LoadBalancer') {
+                    // Cloud-like shape for LoadBalancer
+                    const group = new THREE.Group();
+                    
+                    // Create cloud using multiple spheres
+                    const cloudMat = new THREE.MeshBasicMaterial({ 
+                        color, 
+                        transparent: true, 
+                        opacity: 0.8,
+                        side: THREE.DoubleSide 
+                    });
+                    
+                    const positions = [
+                        { x: 0, y: 0, z: 0, scale: 1.2 },
+                        { x: 0.8, y: 0, z: 0, scale: 1 },
+                        { x: -0.8, y: 0, z: 0, scale: 1 },
+                        { x: 0.4, y: 0, z: 0.7, scale: 0.9 },
+                        { x: -0.4, y: 0, z: 0.7, scale: 0.9 },
+                        { x: 0.4, y: 0, z: -0.7, scale: 0.9 },
+                        { x: -0.4, y: 0, z: -0.7, scale: 0.9 }
+                    ];
+                    
+                    positions.forEach(pos => {
+                        const sphere = new THREE.Mesh(
+                            new THREE.SphereGeometry(0.6 * pos.scale, 16, 16),
+                            cloudMat
+                        );
+                        sphere.position.set(pos.x, pos.y, pos.z);
+                        group.add(sphere);
+                    });
+                    
+                    // Add a glowing core
+                    const coreMat = new THREE.MeshLambertMaterial({ 
+                        color: 0xFFFFFF,
+                        emissive: color,
+                        emissiveIntensity: 0.7
+                    });
+                    const core = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 16), coreMat);
+                    group.add(core);
+                    
+                    portalMesh = group;
+                }
+                
+                portalMesh.userData = { id: srv.id, type: 'service' };
+                const labelText = srv.type === 'NodePort' ? 
+                    `${srv.name} :${srv.nodePort}` : 
+                    srv.name;
+                const label = createHtmlLabel(labelText, new THREE.Vector3(0, 1, 0));
+                portalMesh.add(label);
+                portalMesh.label = label;
+                scene.add(portalMesh);
+                threeObjects.set(`srv-${srv.id}`, portalMesh);
+                recalculateServicePosition(srv);
             }
             function repositionNodes() { 
                 const workers = clusterState.nodes.filter(n => n.type === 'worker'); 
@@ -1188,7 +1368,89 @@
                             orb.material.emissiveIntensity = 0.3 + Math.sin(time * 4 + orb.userData.baseAngle) * 0.2;
                         });
                     }
-                } if (clusterState.selectedServiceId) { const srv = clusterState.services[clusterState.selectedServiceId]; if (srv) { const portalMesh = threeObjects.get(`srv-${srv.id}`); if (portalMesh) { portalMesh.material.emissive = new THREE.Color(portalMesh.material.color); portalMesh.material.emissiveIntensity = Math.sin(time * 5) * .3 + .3; } } } TWEEN.update(); controls.update(); renderer.render(scene, camera); labelRenderer.render(scene, camera);
+                } 
+                if (clusterState.selectedServiceId) { 
+                    const srv = clusterState.services[clusterState.selectedServiceId]; 
+                    if (srv) { 
+                        const portalMesh = threeObjects.get(`srv-${srv.id}`); 
+                        if (portalMesh && portalMesh.material) { 
+                            // Only update emissive if the material supports it
+                            if ('emissive' in portalMesh.material) {
+                                // Use the existing emissive color or create one from the base color
+                                const baseColor = portalMesh.material.color || new THREE.Color(0x00BCD4);
+                                portalMesh.material.emissive = portalMesh.material.emissive || baseColor.clone();
+                                portalMesh.material.emissiveIntensity = Math.sin(time * 5) * .3 + .3; 
+                            }
+                        } 
+                    } 
+                } 
+                
+                // Animate external traffic for NodePort and LoadBalancer services
+                Object.values(clusterState.services).forEach(srv => {
+                    if ((srv.type === 'NodePort' || srv.type === 'LoadBalancer') && srv.isVisible) {
+                        const serviceMesh = threeObjects.get(`srv-${srv.id}`);
+                        const internetMesh = threeObjects.get('internet');
+                        
+                        if (serviceMesh && internetMesh) {
+                            // Create traffic particles if not exists
+                            if (!srv.trafficParticles) {
+                                srv.trafficParticles = [];
+                            }
+                            
+                            // Add new particle every few frames
+                            if (Math.random() < 0.02) {
+                                const particleGeom = new THREE.SphereGeometry(0.15, 8, 8);
+                                const particleMat = new THREE.MeshBasicMaterial({
+                                    color: 0x00FF00,
+                                    emissive: 0x00FF00,
+                                    emissiveIntensity: 0.8
+                                });
+                                const particle = new THREE.Mesh(particleGeom, particleMat);
+                                particle.userData = { 
+                                    progress: 0,
+                                    serviceId: srv.id,
+                                    startPos: internetMesh.position.clone(),
+                                    endPos: serviceMesh.position.clone()
+                                };
+                                scene.add(particle);
+                                srv.trafficParticles.push(particle);
+                            }
+                            
+                            // Update existing particles
+                            srv.trafficParticles = srv.trafficParticles.filter(particle => {
+                                particle.userData.progress += 0.015;
+                                
+                                if (particle.userData.progress >= 1) {
+                                    scene.remove(particle);
+                                    return false;
+                                }
+                                
+                                // Interpolate position
+                                const t = particle.userData.progress;
+                                const startPos = particle.userData.startPos;
+                                const endPos = particle.userData.endPos;
+                                
+                                // Create curved path
+                                const height = 5 + Math.sin(t * Math.PI) * 3;
+                                particle.position.x = startPos.x + (endPos.x - startPos.x) * t;
+                                particle.position.y = startPos.y + (endPos.y - startPos.y) * t + height;
+                                particle.position.z = startPos.z + (endPos.z - startPos.z) * t;
+                                
+                                // Fade in and out
+                                const opacity = Math.sin(t * Math.PI);
+                                particle.material.opacity = opacity;
+                                particle.material.transparent = true;
+                                
+                                return true;
+                            });
+                        }
+                    }
+                });
+                
+                TWEEN.update(); 
+                controls.update(); 
+                renderer.render(scene, camera); 
+                labelRenderer.render(scene, camera);
             }
             function onWindowResize() { 
                 const leftPanel = document.getElementById('left-panel');
@@ -1198,8 +1460,8 @@
                 const rightWidth = rightPanel ? rightPanel.offsetWidth : 350;
                 const bottomHeight = bottomPanel ? bottomPanel.offsetHeight : 100;
                 
-                const width = window.innerWidth - leftWidth - rightWidth;
-                const height = window.innerHeight - 50 - bottomHeight;
+                const width = Math.max(1, window.innerWidth - leftWidth - rightWidth);
+                const height = Math.max(1, window.innerHeight - 50 - bottomHeight);
                 
                 camera.aspect = width / height; 
                 camera.updateProjectionMatrix(); 
@@ -1216,12 +1478,103 @@
             function updateClusterOverview() { const workers = clusterState.nodes.filter(n => n.type === 'worker').length; document.getElementById('node-count-str').textContent = `1 Master, ${workers} Worker${workers !== 1 ? 's' : ''}`; document.getElementById('pod-count').textContent = Object.keys(clusterState.pods).filter(k => clusterState.pods[k].status !== 'Terminating').length; }
             function updateResourcePoolView() { const workers = clusterState.nodes.filter(n => n.type === 'worker' && !n.isFailing); let totalCpu = 0, totalMem = 0, usedCpu = 0, usedMem = 0; workers.forEach(n => { totalCpu += n.cpu.capacity; totalMem += n.memory.capacity; usedCpu += n.cpu.usage; usedMem += n.memory.usage; }); const cpuPercent = totalCpu > 0 ? (usedCpu / totalCpu * 100).toFixed(1) : 0; const memPercent = totalMem > 0 ? (usedMem / totalMem * 100).toFixed(1) : 0; document.getElementById('total-cpu-gauge').style.width = `${cpuPercent}%`; document.getElementById('total-cpu-gauge').textContent = `${usedCpu}m / ${totalCpu}m (${cpuPercent}%)`; document.getElementById('total-mem-gauge').style.width = `${memPercent}%`; document.getElementById('total-mem-gauge').textContent = `${usedMem}Mi / ${totalMem}Mi (${memPercent}%)`; }
             function updateDeploymentList() { const listEl = document.getElementById('deployment-list'); listEl.innerHTML = '<ul></ul>'; const ul = listEl.querySelector('ul'); Object.values(clusterState.deployments).forEach(dep => { const running = Array.from(dep.podIds).filter(id => clusterState.pods[id]?.status === 'Running').length; const el = document.createElement('li'); el.innerHTML = `<div class="tree-item" data-id="${dep.id}" data-type="deployment"><span class="tree-swivel">▶</span><span style="color:${CONFIG.APP_COLORS[dep.image]}">${dep.name} (${running}/${dep.replicas})</span></div>`; const podsUl = document.createElement('ul'); podsUl.className = 'tree-item-children collapsed'; Array.from(dep.podIds).map(id => clusterState.pods[id]).filter(Boolean).forEach(pod => { const podLi = document.createElement('li'); const statusColor = { Running: CONFIG.COLORS.POD_RUNNING, Pending: CONFIG.COLORS.POD_PENDING, Failed: CONFIG.COLORS.POD_FAILED, Terminating: '#aaa' }[pod.status]; podLi.innerHTML = `<div class="tree-item" data-id="${pod.id}" data-type="pod"><span class="status-dot" style="background-color:${statusColor};"></span><span>${pod.name} on ${clusterState.nodes.find(n => n.id === pod.nodeId)?.name || 'N/A'}</span></div>`; podsUl.appendChild(podLi); }); el.appendChild(podsUl); ul.appendChild(el); }); }
-            function showNodeInspector(nodeId) { const node = clusterState.nodes.find(n => n.id === nodeId); if (!node) return; document.getElementById('inspector-title').textContent = `Node: ${node.name}`; let content = ''; if (node.type === 'master') { content = `<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Master Node</b> runs the <b>Control Plane</b> components (the orbiting spheres) which manage the entire cluster:<br>• <b>API Server</b> (green) - Entry point for all operations<br>• <b>etcd</b> (blue) - Distributed key-value store<br>• <b>Scheduler</b> (yellow) - Assigns pods to nodes<br>• <b>Controller Manager</b> (orange) - Maintains desired state</p></div>`; } else { const cpuUsage = ((node.cpu.usage / node.cpu.capacity) * 100).toFixed(1); const memUsage = ((node.memory.usage / node.memory.capacity) * 100).toFixed(1); content = `<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Worker Node</b> IS a machine (virtual or physical) that runs your application Pods. It contributes its CPU and Memory to the cluster-wide <b>Resource Pool</b> shown on the left.</p></div><div class="info-card"><h4>Node Capacity & Usage</h4><p>CPU: ${node.cpu.usage}m / ${node.cpu.capacity}m (${cpuUsage}%)</p><p>Memory: ${node.memory.usage}Mi / ${node.memory.capacity}Mi (${memUsage}%)</p><p>Pods Running: ${node.pods.size}</p><br><button class="danger" onclick="window.sim.failNode(${node.id})">Simulate Node Failure</button></div>`; } document.getElementById('inspector-content').innerHTML = content; }
-            function showPodInspector(podId) { const pod = clusterState.pods[podId]; if (!pod) return; document.getElementById('inspector-title').textContent = `Pod: ${pod.name}`; 
+            function showNodeInspector(nodeId) { 
+                const node = clusterState.nodes.find(n => n.id === nodeId); 
+                if (!node) return; 
+                const nodeType = node.type === 'master' ? getLabel('Master Node') : getLabel('Worker Node');
+                document.getElementById('inspector-title').textContent = `${nodeType}: ${node.name}`; 
+                let content = ''; 
+                if (node.type === 'master') { 
+                    content = `<div class="info-card">
+                        <h5>What is this?</h5>
+                        <p class="explanation">A <b>${getLabel('Master Node')}</b> runs the <b>${getLabel('Control Plane')}</b> components (the orbiting spheres) which manage the entire cluster:<br>
+                        • <b>${getLabel('API Server')}</b> (green) - Entry point for all operations<br>
+                        • <b>${getLabel('etcd')}</b> (blue) - Distributed key-value store<br>
+                        • <b>${getLabel('Scheduler')}</b> (yellow) - Assigns ${getLabel('Pod')}s to nodes<br>
+                        • <b>${getLabel('Controller Manager')}</b> (orange) - Maintains desired state</p>
+                    </div>`; 
+                } else { 
+                    const cpuUsage = ((node.cpu.usage / node.cpu.capacity) * 100).toFixed(1); 
+                    const memUsage = ((node.memory.usage / node.memory.capacity) * 100).toFixed(1); 
+                    content = `<div class="info-card">
+                        <h5>What is this?</h5>
+                        <p class="explanation">A <b>${getLabel('Worker Node')}</b> IS a machine (virtual or physical) that runs your ${getLabel('Pod')}s. It contributes its CPU and Memory to the cluster-wide <b>${getLabel('Resource Pool')}</b> shown on the left.</p>
+                    </div>
+                    <div class="info-card">
+                        <h4>Node Capacity & Usage</h4>
+                        <p>CPU: ${node.cpu.usage}m / ${node.cpu.capacity}m (${cpuUsage}%)</p>
+                        <p>Memory: ${node.memory.usage}Mi / ${node.memory.capacity}Mi (${memUsage}%)</p>
+                        <p>${getLabel('Pod')}s Running: ${node.pods.size}</p>
+                        <br><button class="danger" onclick="window.sim.failNode(${node.id})">${getLabel('Simulate Failure')}</button>
+                    </div>`; 
+                } 
+                document.getElementById('inspector-content').innerHTML = content; 
+            }
+            function showPodInspector(podId) { 
+                const pod = clusterState.pods[podId]; 
+                if (!pod) return; 
+                document.getElementById('inspector-title').textContent = `${getLabel('Pod')}: ${pod.name}`; 
                 const labelsStr = pod.labels ? Object.entries(pod.labels).map(([k, v]) => `${k}=${v}`).join(', ') : 'None';
-                document.getElementById('inspector-content').innerHTML = `<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Pod</b> is a wrapper around one or more application <b>Containers</b>. The Container (which holds your app code) runs inside the Pod. The Pod is the smallest 'physical' unit that can be scheduled to run on a Node.</p></div><div class="info-card"><h4>Pod Details</h4><p>Based on Image: ${pod.image}</p><p>Status: ${pod.status}</p><p>Running on: Node ${clusterState.nodes.find(n => n.id === pod.nodeId)?.name || 'N/A'}</p><p>Labels: <code>${labelsStr}</code></p><h5>Resource Requests</h5><p>CPU: ${pod.cpuRequest}m | Memory: ${pod.memRequest}Mi</p><br><button class="danger" onclick="window.sim.killPod(${pod.id})">Kill Pod</button></div>`; }
-            function showDeploymentInspector(depId) { const dep = clusterState.deployments[depId]; if (!dep) return; document.getElementById('inspector-title').textContent = `Deployment: ${dep.name}`; document.getElementById('inspector-content').innerHTML = `<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Deployment</b> manages the Pods for <b>one component</b> of your application (e.g., the web servers). A complete 'Application' is often composed of multiple Deployments and Services working together. <br><br><b>This visual box is a LOGICAL grouping, not a physical one.</b></p></div><div class="info-card"><h4>Deployment Status</h4><p>Desired Replicas: ${dep.replicas}</p><p>Current Pods: ${Array.from(dep.podIds).filter(id => clusterState.pods[id]).length}</p><p>Container Image: ${dep.image}</p></div>`; }
-            function showServiceInspector(srvId) { const srv = clusterState.services[srvId]; if (!srv) return; document.getElementById('inspector-title').textContent = `Service: ${srv.name}`; document.getElementById('inspector-content').innerHTML = `<div class="info-card"><h5>What is this?</h5><p class="explanation">A <b>Service</b> operates in the <b>Network Plane</b> above the cluster. It uses <b>label selectors</b> to find matching pods and provides a stable network endpoint for accessing them. Services are managed by the Control Plane but exist independently of any specific node.</p></div><div class="info-card"><h4>Service Details</h4><p>Label Selector: ${srv.selector ? Object.entries(srv.selector).map(([k, v]) => `${k}=${v}`).join(', ') : 'None'}</p><p>Matching Pods: ${Object.values(clusterState.pods).filter(pod => pod.labels && srv.selector && Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value)).length}</p></div>`; }
+                document.getElementById('inspector-content').innerHTML = `
+                    <div class="info-card">
+                        <h5>What is this?</h5>
+                        <p class="explanation">A <b>${getLabel('Pod')}</b> is a wrapper around one or more <b>${getLabel('Container')}s</b>. Usually it's just one container, but sometimes multiple containers work together as a unit. The ${getLabel('Pod')} is the smallest unit that can be scheduled to run on a ${getLabel('Worker Node')}.</p>
+                    </div>
+                    <div class="info-card">
+                        <h4>${getLabel('Pod')} Details</h4>
+                        <p>Based on Image: ${pod.image}</p>
+                        <p>Status: ${pod.status}</p>
+                        <p>Running on: ${getLabel('Worker Node')} ${clusterState.nodes.find(n => n.id === pod.nodeId)?.name || 'N/A'}</p>
+                        <p>${getLabel('Label Selector')}: <code>${labelsStr}</code></p>
+                        <h5>Resource Requests</h5>
+                        <p>CPU: ${pod.cpuRequest}m | Memory: ${pod.memRequest}Mi</p>
+                        <br><button class="danger" onclick="window.sim.killPod(${pod.id})">${getLabel('Kill Pod')}</button>
+                    </div>`; 
+            }
+            function showDeploymentInspector(depId) { 
+                const dep = clusterState.deployments[depId]; 
+                if (!dep) return; 
+                document.getElementById('inspector-title').textContent = `${getLabel('Deployment')}: ${dep.name}`; 
+                document.getElementById('inspector-content').innerHTML = `
+                    <div class="info-card">
+                        <h5>What is this?</h5>
+                        <p class="explanation">A <b>${getLabel('Deployment')}</b> manages the ${getLabel('Pod')}s for <b>one component</b> of your application (e.g., the web servers). A complete 'Application' is often composed of multiple ${getLabel('Deployment')}s and ${getLabel('Service')}s working together. <br><br><b>This visual box is a LOGICAL grouping, not a physical one.</b></p>
+                    </div>
+                    <div class="info-card">
+                        <h4>${getLabel('Deployment')} Status</h4>
+                        <p>Desired ${getLabel('Replicas')}: ${dep.replicas}</p>
+                        <p>Current ${getLabel('Pod')}s: ${Array.from(dep.podIds).filter(id => clusterState.pods[id]).length}</p>
+                        <p>${getLabel('Container')} Image: ${dep.image}</p>
+                    </div>`; 
+            }
+            function showServiceInspector(srvId) { 
+                const srv = clusterState.services[srvId]; 
+                if (!srv) return; 
+                document.getElementById('inspector-title').textContent = `${getLabel('Service')}: ${srv.name}`; 
+                
+                let typeDescription = '';
+                if (srv.type === 'ClusterIP' || !srv.type) {
+                    typeDescription = 'ClusterIP services are only accessible from within the cluster. They provide a stable internal IP address for pod-to-pod communication.';
+                } else if (srv.type === 'NodePort') {
+                    typeDescription = `NodePort services expose the service on each node's IP at a static port (${srv.nodePort}). External traffic can access the service by connecting to any node on this port.`;
+                } else if (srv.type === 'LoadBalancer') {
+                    typeDescription = 'LoadBalancer services provision an external load balancer (in supported cloud environments) that distributes traffic across all nodes. This provides a single external IP for accessing the service.';
+                }
+                
+                document.getElementById('inspector-content').innerHTML = `
+                    <div class="info-card">
+                        <h5>What is this?</h5>
+                        <p class="explanation">A <b>${srv.type || 'ClusterIP'} Service</b> operates in the <b>Network Plane</b> above the cluster. It uses <b>label selectors</b> to find matching pods and provides a stable network endpoint for accessing them.</p>
+                        <p class="explanation" style="margin-top: 10px;">${typeDescription}</p>
+                    </div>
+                    <div class="info-card">
+                        <h4>Service Details</h4>
+                        <p>Type: <b>${srv.type || 'ClusterIP'}</b></p>
+                        ${srv.nodePort ? `<p>NodePort: <b>${srv.nodePort}</b></p>` : ''}
+                        <p>Label Selector: ${srv.selector ? Object.entries(srv.selector).map(([k, v]) => `${k}=${v}`).join(', ') : 'None'}</p>
+                        <p>Matching Pods: ${Object.values(clusterState.pods).filter(pod => pod.labels && srv.selector && Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value)).length}</p>
+                    </div>`; 
+            }
             function hideInspector() { 
                 document.getElementById('inspector-title').textContent = 'Inspector';
                 document.getElementById('inspector-content').innerHTML = '<p style="color: var(--ui-text-secondary); text-align: center; margin-top: var(--spacing-xl);">Click on any object in the cluster to see its details here.</p>';
@@ -1264,7 +1617,91 @@
                     });
                 }
             }
-            function renderHierarchy() { const treeContainer = document.getElementById('hierarchy-tree'); const scrollTop = treeContainer.scrollTop; treeContainer.innerHTML = ''; const clusterUl = document.createElement('ul'); clusterUl.innerHTML = `<li><div class="tree-item"><span class="tree-swivel">▼</span><span><b>Cluster</b></span></div></li>`; const clusterLi = clusterUl.firstElementChild; const resourcesUl = document.createElement('ul'); resourcesUl.className = 'tree-item-children'; const nodesLi = document.createElement('li'); nodesLi.innerHTML = `<div class="tree-item"><span class="tree-swivel">▼</span><span><b>Nodes</b></span></div>`; const nodesUl = document.createElement('ul'); nodesUl.className = 'tree-item-children'; clusterState.nodes.forEach(node => { const nodeLi = document.createElement('li'); const eyeIcon = node.isVisible ? '👁️' : '👁️‍🗨️'; nodeLi.innerHTML = `<div class="tree-item" data-id="${node.id}" data-type="node"><span class="tree-swivel">${node.pods.size > 0 ? '▶' : ''}</span><span class="tree-eye">${eyeIcon}</span><span>${node.name}</span><span class="role">(${node.type})</span></div>`; const podsUl = document.createElement('ul'); podsUl.className = 'tree-item-children collapsed'; Array.from(node.pods).map(id => clusterState.pods[id]).filter(Boolean).forEach(pod => { const podLi = document.createElement('li'); const podEye = pod.isVisible ? '👁️' : '👁️‍🗨️'; podLi.innerHTML = `<div class="tree-item" data-id="${pod.id}" data-type="pod"><span class="tree-swivel">▼</span><span class="tree-eye">${podEye}</span><span style="color:${CONFIG.APP_COLORS[pod.image]}">Pod: ${pod.name}</span></div>`; const containerUl = document.createElement('ul'); containerUl.className = 'tree-item-children'; containerUl.innerHTML = `<li><div class="tree-item"><span class="tree-swivel"></span><span class="tree-eye" style="opacity:0.5"></span><span style="color:${CONFIG.APP_COLORS[pod.image]}">Container: ${pod.image}</span></div></li>`; podLi.appendChild(containerUl); podsUl.appendChild(podLi); }); if (node.pods.size > 0) nodeLi.appendChild(podsUl); nodesUl.appendChild(nodeLi); }); nodesLi.appendChild(nodesUl); resourcesUl.appendChild(nodesLi); const depsLi = document.createElement('li'); depsLi.innerHTML = `<div class="tree-item"><span class="tree-swivel">▼</span><span><b>Deployments</b></span></div>`; const depsUl = document.createElement('ul'); depsUl.className = 'tree-item-children'; Object.values(clusterState.deployments).forEach(dep => { const depLi = document.createElement('li'); const eyeIcon = dep.isVisible ? '👁️' : '👁️‍🗨️'; depLi.innerHTML = `<div class="tree-item" data-id="${dep.id}" data-type="deployment"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${CONFIG.APP_COLORS[dep.image]}">${dep.name}</span></div>`; depsUl.appendChild(depLi); }); depsLi.appendChild(depsUl); resourcesUl.appendChild(depsLi); const srvsLi = document.createElement('li'); srvsLi.innerHTML = `<div class="tree-item"><span class="tree-swivel">▼</span><span><b>Services</b></span></div>`; const srvsUl = document.createElement('ul'); srvsUl.className = 'tree-item-children'; Object.values(clusterState.services).forEach(srv => { const srvLi = document.createElement('li'); const eyeIcon = srv.isVisible ? '👁️' : '👁️‍🗨️'; const matchingPod = Object.values(clusterState.pods).find(pod => { if (!pod.labels || !srv.selector) return false; return Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value); }); const color = matchingPod ? CONFIG.APP_COLORS[matchingPod.image] : '#00BCD4'; srvLi.innerHTML = `<div class="tree-item" data-id="${srv.id}" data-type="service"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${color}">${srv.name}</span></div>`; srvsUl.appendChild(srvLi); }); srvsLi.appendChild(srvsUl); resourcesUl.appendChild(srvsLi); clusterLi.appendChild(resourcesUl); treeContainer.appendChild(clusterUl); treeContainer.scrollTop = scrollTop; }
+            function renderHierarchy() { 
+                const treeContainer = document.getElementById('hierarchy-tree'); 
+                const scrollTop = treeContainer.scrollTop; 
+                treeContainer.innerHTML = ''; 
+                
+                const clusterUl = document.createElement('ul'); 
+                clusterUl.innerHTML = `<li><div class="tree-item"><span class="tree-swivel">▼</span><span><b>Cluster</b></span></div></li>`; 
+                const clusterLi = clusterUl.firstElementChild; 
+                const resourcesUl = document.createElement('ul'); 
+                resourcesUl.className = 'tree-item-children'; 
+                
+                // Nodes section
+                const nodesLi = document.createElement('li'); 
+                nodesLi.innerHTML = `<div class="tree-item"><span class="tree-swivel">▼</span><span><b>${getLabel('Nodes')}</b></span></div>`; 
+                const nodesUl = document.createElement('ul'); 
+                nodesUl.className = 'tree-item-children'; 
+                
+                clusterState.nodes.forEach(node => { 
+                    const nodeLi = document.createElement('li'); 
+                    const eyeIcon = node.isVisible ? '👁️' : '👁️‍🗨️'; 
+                    const nodeType = node.type === 'master' ? getLabel('Master Node') : getLabel('Worker Node');
+                    nodeLi.innerHTML = `<div class="tree-item" data-id="${node.id}" data-type="node"><span class="tree-swivel">${node.pods.size > 0 ? '▶' : ''}</span><span class="tree-eye">${eyeIcon}</span><span>${node.name}</span><span class="role">(${nodeType})</span></div>`; 
+                    
+                    const podsUl = document.createElement('ul'); 
+                    podsUl.className = 'tree-item-children collapsed'; 
+                    
+                    Array.from(node.pods).map(id => clusterState.pods[id]).filter(Boolean).forEach(pod => { 
+                        const podLi = document.createElement('li'); 
+                        const podEye = pod.isVisible ? '👁️' : '👁️‍🗨️'; 
+                        podLi.innerHTML = `<div class="tree-item" data-id="${pod.id}" data-type="pod"><span class="tree-swivel">▼</span><span class="tree-eye">${podEye}</span><span style="color:${CONFIG.APP_COLORS[pod.image]}">${getLabel('Pod')}: ${pod.name}</span></div>`; 
+                        
+                        const containerUl = document.createElement('ul'); 
+                        containerUl.className = 'tree-item-children'; 
+                        containerUl.innerHTML = `<li><div class="tree-item"><span class="tree-swivel"></span><span class="tree-eye" style="opacity:0.5"></span><span style="color:${CONFIG.APP_COLORS[pod.image]}">${getLabel('Container')}: ${pod.image}</span></div></li>`; 
+                        podLi.appendChild(containerUl); 
+                        podsUl.appendChild(podLi); 
+                    }); 
+                    
+                    if (node.pods.size > 0) nodeLi.appendChild(podsUl); 
+                    nodesUl.appendChild(nodeLi); 
+                }); 
+                
+                nodesLi.appendChild(nodesUl); 
+                resourcesUl.appendChild(nodesLi); 
+                
+                // Deployments section
+                const depsLi = document.createElement('li'); 
+                depsLi.innerHTML = `<div class="tree-item"><span class="tree-swivel">▼</span><span><b>${getLabel('Deployments')}</b></span></div>`; 
+                const depsUl = document.createElement('ul'); 
+                depsUl.className = 'tree-item-children'; 
+                
+                Object.values(clusterState.deployments).forEach(dep => { 
+                    const depLi = document.createElement('li'); 
+                    const eyeIcon = dep.isVisible ? '👁️' : '👁️‍🗨️'; 
+                    depLi.innerHTML = `<div class="tree-item" data-id="${dep.id}" data-type="deployment"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${CONFIG.APP_COLORS[dep.image]}">${dep.name}</span></div>`; 
+                    depsUl.appendChild(depLi); 
+                }); 
+                
+                depsLi.appendChild(depsUl); 
+                resourcesUl.appendChild(depsLi); 
+                
+                // Services section
+                const srvsLi = document.createElement('li'); 
+                srvsLi.innerHTML = `<div class="tree-item"><span class="tree-swivel">▼</span><span><b>${getLabel('Services')}</b></span></div>`; 
+                const srvsUl = document.createElement('ul'); 
+                srvsUl.className = 'tree-item-children'; 
+                
+                Object.values(clusterState.services).forEach(srv => { 
+                    const srvLi = document.createElement('li'); 
+                    const eyeIcon = srv.isVisible ? '👁️' : '👁️‍🗨️'; 
+                    const matchingPod = Object.values(clusterState.pods).find(pod => { 
+                        if (!pod.labels || !srv.selector) return false; 
+                        return Object.entries(srv.selector).every(([key, value]) => pod.labels[key] === value); 
+                    }); 
+                    const color = matchingPod ? CONFIG.APP_COLORS[matchingPod.image] : '#00BCD4'; 
+                    srvLi.innerHTML = `<div class="tree-item" data-id="${srv.id}" data-type="service"><span class="tree-swivel"></span><span class="tree-eye">${eyeIcon}</span><span style="color: ${color}">${srv.name}</span></div>`; 
+                    srvsUl.appendChild(srvLi); 
+                }); 
+                
+                srvsLi.appendChild(srvsUl); 
+                resourcesUl.appendChild(srvsLi); 
+                clusterLi.appendChild(resourcesUl); 
+                treeContainer.appendChild(clusterUl); 
+                treeContainer.scrollTop = scrollTop; 
+            }
             function toggleTreeItemVisibility(element, isVisible) {
                 const { id, type } = element.dataset; let stateObject; let threeObj; if (type === 'node') stateObject = clusterState.nodes.find(n => n.id == id); if (type === 'pod') stateObject = clusterState.pods[id]; if (type === 'deployment') stateObject = clusterState.deployments[id]; if (type === 'service') stateObject = clusterState.services[id]; if (stateObject) {
                     stateObject.isVisible = isVisible; element.querySelector('.tree-eye').textContent = isVisible ? '👁️' : '👁️‍🗨️'; if (type === 'deployment') threeObj = threeObjects.get(`dep-${id}`); else if (type === 'service') threeObj = threeObjects.get(`srv-${id}`); else threeObj = threeObjects.get(stateObject.id); if (threeObj) {
@@ -1315,7 +1752,10 @@
                             document.getElementById('remove-worker-btn').addEventListener('click', removeLastWorkerNode);
                             document.getElementById('create-deployment-btn').addEventListener('click', createDeployment);
                             document.getElementById('create-service-btn').addEventListener('click', createService);
-                            document.getElementById('close-welcome-btn').addEventListener('click', () => document.getElementById('welcome-panel').style.display = 'none');
+                            document.getElementById('close-welcome-btn').addEventListener('click', () => {
+                                document.getElementById('welcome-panel').style.display = 'none';
+                                setCookie('k8sviz_welcome_shown', 'true', 365); // Remember for 1 year
+                            });
                             document.getElementById('close-inspector-btn').addEventListener('click', hideInspector);
                             document.getElementById('pause-btn').addEventListener('click', () => { clusterState.isPaused = !clusterState.isPaused; document.getElementById('pause-btn').textContent = clusterState.isPaused ? 'Resume' : 'Pause'; });
                             document.getElementById('replica-slider').addEventListener('input', e => document.getElementById('replica-count-label').textContent = e.target.value);
@@ -1410,12 +1850,18 @@
                     clusterContainer.style.right = rightWidth + 'px';
                     clusterContainer.style.bottom = bottomHeight + 'px';
                     
+                    // Update bottom panel to align with left panel
+                    bottomPanel.style.left = leftWidth + 'px';
+                    
                     // Update camera aspect ratio
-                    if (camera) {
-                        camera.aspect = (window.innerWidth - leftWidth - rightWidth) / (window.innerHeight - 50 - bottomHeight);
+                    if (camera && renderer) {
+                        const width = Math.max(1, window.innerWidth - leftWidth - rightWidth);
+                        const height = Math.max(1, window.innerHeight - 50 - bottomHeight);
+                        
+                        camera.aspect = width / height;
                         camera.updateProjectionMatrix();
-                        renderer.setSize(window.innerWidth - leftWidth - rightWidth, window.innerHeight - 50 - bottomHeight);
-                        labelRenderer.setSize(window.innerWidth - leftWidth - rightWidth, window.innerHeight - 50 - bottomHeight);
+                        renderer.setSize(width, height);
+                        labelRenderer.setSize(width, height);
                     }
                 }
                 
@@ -1428,11 +1874,295 @@
                 updateLayout();
             }
             
+            // Label mapping system
+            const labelMappings = {
+                // UI Elements
+                'Cluster Explorer': 'System Overview',
+                'Resource Pool': 'Available Resources',
+                'Hierarchy': 'System Structure',
+                'Inspector': 'Details Panel',
+                'Event Log': 'Activity Monitor',
+                
+                // Main concepts
+                'Control Plane': 'Cluster Brain',
+                'Data Plane': 'Workload Layer',
+                'Network Plane': 'Traffic Layer',
+                'Master Node': 'Management Server',
+                'Worker Node': 'Application Server',
+                
+                // Objects
+                'Pod': 'Container Instance',
+                'Deployment': 'Container Manager',
+                'Service': 'Traffic Router',
+                'Container': 'App Package',
+                
+                // Service types
+                'ClusterIP': 'Internal Only',
+                'NodePort': 'Direct Access',
+                'LoadBalancer': 'Managed External',
+                
+                // Control plane components
+                'API Server': 'Command Center',
+                'etcd': 'Cluster Database',
+                'Scheduler': 'Placement Engine',
+                'Controller Manager': 'Automation Hub',
+                
+                // Actions
+                'Create Deployment': 'Create Container Manager',
+                'Create Service': 'Create Traffic Router',
+                'Add Worker': 'Add Server',
+                'Remove Worker': 'Remove Server',
+                'Scale': 'Adjust Copies',
+                'Kill Pod': 'Stop Instance',
+                'Simulate Failure': 'Test Failure',
+                
+                // Descriptions
+                'Label Selector': 'Container Instance Tags',
+                'Service Name': 'Name',
+                'Service Type': 'Routing Type',
+                'Replicas': 'Copies',
+                'Matching Pods': 'Matching Container Instances',
+                'Active Deployments': 'Active Container Managers',
+                'Active Services': 'Active Traffic Routers',
+                'Nodes': 'Servers',
+                'Deployments': 'Container Managers',
+                'Services': 'Traffic Routers'
+            };
+            
+            // Tooltip descriptions
+            const tooltipDescriptions = {
+                'Pod': 'Smallest deployable unit - typically one container, sometimes multiple tightly-coupled containers',
+                'Container Instance': 'Usually one container, but can be multiple containers that share storage and network',
+                'Deployment': 'Ensures desired number of pod replicas are running',
+                'Container Manager': 'Keeps your containers running with the right number of copies',
+                'Service': 'Routes network traffic to pods based on label selectors',
+                'Traffic Router': 'Directs incoming requests to healthy pods',
+                'Control Plane': 'Management components that make cluster decisions',
+                'Cluster Brain': 'The decision-making center of your system',
+                'Worker Node': 'Server that runs your application workloads',
+                'Application Server': 'Computer that hosts your running applications',
+                'ClusterIP': 'Service only accessible from within the cluster',
+                'Internal Only': 'Can only be reached by other apps in the system',
+                'NodePort': 'Service accessible on a specific port on every node',
+                'Direct Access': 'External access through specific server ports',
+                'LoadBalancer': 'Service accessible via cloud provider load balancer',
+                'Managed External': 'Cloud provider handles external traffic distribution'
+            };
+            
+            let useIntuitive = false;
+            const tooltips = new Map();
+            
+            // Toggle label mode
+            function toggleLabelMode() {
+                useIntuitive = !useIntuitive;
+                updateAllLabels();
+                logEvent(`Switched to ${useIntuitive ? 'intuitive' : 'Kubernetes'} terminology`, 'INFO');
+            }
+            
+            // Get appropriate label
+            function getLabel(k8sLabel) {
+                if (useIntuitive && labelMappings[k8sLabel]) {
+                    return labelMappings[k8sLabel];
+                }
+                return k8sLabel;
+            }
+            
+            // Update all visible labels
+            function updateAllLabels() {
+                // Update all elements with data-label attribute
+                document.querySelectorAll('[data-label]').forEach(el => {
+                    const k8sLabel = el.getAttribute('data-label');
+                    if (el.tagName === 'LABEL') {
+                        // For label elements, update with colon
+                        el.textContent = getLabel(k8sLabel) + ':';
+                    } else if (k8sLabel === 'service-explanation') {
+                        // Special handling for service explanation
+                        if (useIntuitive) {
+                            el.innerHTML = 'Traffic routers send traffic to container instances with specified tags. Select one or more tags from the dropdown.<br>Hold Ctrl/Cmd to select multiple tags.';
+                        } else {
+                            el.innerHTML = 'Services use label selectors to find pods. Select one or more labels from the dropdown.<br>Hold Ctrl/Cmd to select multiple labels.';
+                        }
+                    } else if (k8sLabel === 'replicas-explanation') {
+                        // Special handling for replicas explanation
+                        if (useIntuitive) {
+                            el.innerHTML = 'This tells the Container Manager how many identical <b>Container Instances</b> (copies) to keep running.';
+                        } else {
+                            el.innerHTML = 'This tells the Deployment how many identical <b>Pods</b> (replicas) to keep running.';
+                        }
+                    } else {
+                        el.textContent = getLabel(k8sLabel);
+                    }
+                });
+                
+                // Update specific elements by ID or class
+                updatePanelLabels();
+                renderHierarchy();
+                updateDeploymentList();
+                updateServiceList();
+            }
+            
+            // Create tooltip element
+            function createTooltip(text, element) {
+                const tooltip = document.createElement('div');
+                tooltip.className = 'tooltip';
+                tooltip.textContent = text;
+                tooltip.style.cssText = `
+                    position: absolute;
+                    background: rgba(0, 0, 0, 0.9);
+                    color: white;
+                    padding: 8px 12px;
+                    border-radius: 4px;
+                    font-size: 13px;
+                    pointer-events: none;
+                    z-index: 1000;
+                    opacity: 0;
+                    transition: opacity 0.3s ease;
+                    max-width: 250px;
+                    line-height: 1.4;
+                `;
+                
+                // Position tooltip
+                const rect = element.getBoundingClientRect();
+                tooltip.style.left = rect.left + 'px';
+                tooltip.style.top = (rect.bottom + 5) + 'px';
+                
+                document.body.appendChild(tooltip);
+                
+                // Fade in
+                requestAnimationFrame(() => {
+                    tooltip.style.opacity = '1';
+                });
+                
+                return tooltip;
+            }
+            
+            // Setup tooltip on hover
+            function setupTooltip(element, k8sLabel) {
+                let hoverTimer;
+                let hideTimer;
+                let currentTooltip;
+                
+                element.addEventListener('mouseenter', () => {
+                    clearTimeout(hideTimer);
+                    
+                    hoverTimer = setTimeout(() => {
+                        const description = tooltipDescriptions[k8sLabel] || 
+                                          tooltipDescriptions[getLabel(k8sLabel)];
+                        if (description && !currentTooltip) {
+                            currentTooltip = createTooltip(description, element);
+                            tooltips.set(element, currentTooltip);
+                        }
+                    }, 1000);
+                });
+                
+                element.addEventListener('mouseleave', () => {
+                    clearTimeout(hoverTimer);
+                    
+                    if (currentTooltip) {
+                        hideTimer = setTimeout(() => {
+                            currentTooltip.style.opacity = '0';
+                            setTimeout(() => {
+                                if (currentTooltip.parentNode) {
+                                    currentTooltip.parentNode.removeChild(currentTooltip);
+                                }
+                                tooltips.delete(element);
+                                currentTooltip = null;
+                            }, 500);
+                        }, 1000);
+                    }
+                });
+            }
+            
+            // Update panel labels
+            function updatePanelLabels() {
+                // Panel headers
+                const panelHeaders = {
+                    'left-panel h2': 'Cluster Explorer',
+                    'resource-pool h3': 'Resource Pool',
+                    'hierarchy-container h3': 'Hierarchy',
+                    'right-panel-header h2': 'Inspector',
+                    'bottom-panel h3': 'Event Log'
+                };
+                
+                Object.entries(panelHeaders).forEach(([selector, k8sLabel]) => {
+                    const element = document.querySelector(selector);
+                    if (element) {
+                        element.textContent = getLabel(k8sLabel);
+                        if (!element.hasAttribute('data-label')) {
+                            element.setAttribute('data-label', k8sLabel);
+                            setupTooltip(element, k8sLabel);
+                        }
+                    }
+                });
+                
+                // Button labels
+                document.querySelectorAll('button').forEach(button => {
+                    const k8sText = button.getAttribute('data-label') || button.textContent;
+                    if (labelMappings[k8sText]) {
+                        if (!button.hasAttribute('data-label')) {
+                            button.setAttribute('data-label', k8sText);
+                        }
+                        button.textContent = getLabel(k8sText);
+                    }
+                });
+                
+                // Control group headers
+                document.querySelectorAll('.control-group h3').forEach(header => {
+                    const text = header.childNodes[0].textContent;
+                    if (labelMappings[text]) {
+                        header.childNodes[0].textContent = getLabel(text);
+                        if (!header.hasAttribute('data-label')) {
+                            header.setAttribute('data-label', text);
+                            setupTooltip(header, text);
+                        }
+                    }
+                });
+                
+                // Service type options
+                const serviceTypeSelector = document.getElementById('service-type-selector');
+                if (serviceTypeSelector) {
+                    // Store original values if not already done
+                    if (!serviceTypeSelector.dataset.initialized) {
+                        Array.from(serviceTypeSelector.options).forEach(option => {
+                            option.dataset.k8sText = option.text;
+                        });
+                        serviceTypeSelector.dataset.initialized = 'true';
+                    }
+                    
+                    // Update options based on mode
+                    Array.from(serviceTypeSelector.options).forEach(option => {
+                        if (useIntuitive) {
+                            const intuitive = {
+                                'ClusterIP': 'Internal Only',
+                                'NodePort': 'Direct Access', 
+                                'LoadBalancer': 'Managed External'
+                            };
+                            option.text = intuitive[option.value] + ' ' + option.dataset.k8sText.match(/\(.*\)/)[0];
+                        } else {
+                            option.text = option.dataset.k8sText;
+                        }
+                    });
+                }
+            }
+            
+            // Add Tab key listener
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    toggleLabelMode();
+                }
+            });
+            
             window.sim = { scaleDeployment, failNode, killPod, simulateTraffic };
                             addNode('master', 'master-node-1'); addNode('worker', 'worker-node-1');
                             setTool('navigate');
                             updateLabelSelector(); // Initialize the label selector
                             initPanelResizing(); // Initialize panel resizing
+                            
+                            // Initialize label system
+                            setTimeout(() => {
+                                updatePanelLabels(); // Setup initial labels and tooltips
+                            }, 100);
                             animate(); setInterval(reconciliationLoop, 1000);
                         });
     </script>
