@@ -803,7 +803,7 @@
                 'Event Log': 'Activity Monitor',
                 
                 // Main concepts
-                'Control Plane': 'Cluster Brain',
+                'Control Plane': 'Control Plane',
                 'Data Plane': 'Workload Layer',
                 'Network Plane': 'Traffic Layer',
                 'Master Node': 'Management Server',
@@ -823,10 +823,10 @@
                 
                 // Control plane components
                 'API Server': 'Control Plane API',
-                'etcd': 'Cluster Database',
-                'Scheduler': 'Placement Engine',
-                'Controller Manager': 'Automation Hub',
-                'kube-proxy': 'Network Router',
+                'etcd': 'Cluster State Store',
+                'Scheduler': 'Scheduler',
+                'Controller Manager': 'Controller Manager',
+                'kube-proxy': 'Service Rule Manager',
                 
                 // Actions
                 'Create Deployment': 'Create Container Manager',
@@ -1127,35 +1127,36 @@
                 let sourcePos;
                 let sourceName;
                 
-                // Always find the kube-proxy to pod cable first
-                const kubeProxyToPodLine = srv.networkLines.find(line => 
-                    line.userData.type === 'kubeproxy-to-pod' && 
+                // Find the iptables to pod cable
+                const iptablesToPodLine = srv.networkLines.find(line => 
+                    line.userData.type === 'iptables-to-pod' && 
                     line.userData.podId === targetPod.id
                 );
                 
                 if (srv.type === 'ClusterIP' || !srv.type) {
-                    // Internal traffic: start from kube-proxy position
-                    if (targetNode.kubeProxy) {
+                    // Internal traffic: goes directly to pod (bypassing kube-proxy)
+                    const nodeMesh = threeObjects.get(targetNode.id);
+                    if (nodeMesh) {
                         sourcePos = new THREE.Vector3();
-                        targetNode.kubeProxy.getWorldPosition(sourcePos);
+                        nodeMesh.getWorldPosition(sourcePos);
+                        sourcePos.y += 2; // Start from network layer above node
                         sourceName = 'Internal';
                         
-                        if (kubeProxyToPodLine && kubeProxyToPodLine.userData.cable) {
-                            cables.push(kubeProxyToPodLine.userData.cable);
-                            cablesToPulse.push(kubeProxyToPodLine);
-                        }
+                        // No cable to pulse for internal traffic - it goes directly
                     }
                 } else if (srv.type === 'NodePort') {
-                    // External traffic through NodePort: start from node edge
-                    if (targetNode.kubeProxy) {
+                    // External traffic through NodePort: goes directly to node then to pod
+                    const nodeMesh = threeObjects.get(targetNode.id);
+                    if (nodeMesh) {
                         sourcePos = new THREE.Vector3();
-                        targetNode.kubeProxy.getWorldPosition(sourcePos);
-                        sourcePos.x -= 3; // Start from edge of node
+                        nodeMesh.getWorldPosition(sourcePos);
+                        sourcePos.x -= 5; // Start from outside the node
+                        sourcePos.y += 1;
                         sourceName = 'External';
                         
-                        if (kubeProxyToPodLine && kubeProxyToPodLine.userData.cable) {
-                            cables.push(kubeProxyToPodLine.userData.cable);
-                            cablesToPulse.push(kubeProxyToPodLine);
+                        if (iptablesToPodLine && iptablesToPodLine.userData.cable) {
+                            cables.push(iptablesToPodLine.userData.cable);
+                            cablesToPulse.push(iptablesToPodLine);
                         }
                         
                         logEvent(`External traffic entering through ${targetNode.name}:${srv.nodePort}`, 'INFO');
@@ -1178,9 +1179,9 @@
                         }
                         
                         // Add kube-proxy to pod cable
-                        if (kubeProxyToPodLine && kubeProxyToPodLine.userData.cable) {
-                            cables.push(kubeProxyToPodLine.userData.cable);
-                            cablesToPulse.push(kubeProxyToPodLine);
+                        if (iptablesToPodLine && iptablesToPodLine.userData.cable) {
+                            cables.push(iptablesToPodLine.userData.cable);
+                            cablesToPulse.push(iptablesToPodLine);
                         }
                         
                         // Animate the external LB
@@ -1196,14 +1197,14 @@
                     }
                 }
                 
-                if (!sourcePos || cables.length === 0) return;
+                if (!sourcePos) return;
                 
-                // Log the routing decision
+                // Log the routing decision (kube-proxy configures rules but doesn't handle traffic)
                 const routePath = srv.type === 'NodePort' ? 
-                    `${sourceName} → Node:${srv.nodePort} → kube-proxy → ${targetPod.name}` :
+                    `${sourceName} → Node:${srv.nodePort} → ${targetPod.name} (via iptables rules)` :
                     srv.type === 'LoadBalancer' ?
-                    `${sourceName} → Cloud LB → kube-proxy → ${targetPod.name}` :
-                    `${sourceName} → kube-proxy → ${targetPod.name}`;
+                    `${sourceName} → Cloud LB → Node → ${targetPod.name} (via iptables rules)` :
+                    `${sourceName} → ${targetPod.name} (via iptables rules)`;
                 logEvent(routePath, 'INFO');
                 
                 // Animate kube-proxy glow (no scaling)
@@ -1225,33 +1226,19 @@
                 const podPos = new THREE.Vector3();
                 targetPodMesh.getWorldPosition(podPos);
                 
-                // Create combined path from cables that goes all the way to the pod
+                // Create path through iptables if available
                 let combinedPath;
-                if (cables.length > 0) {
-                    // Build path that follows cables to the pod
-                    const points = [];
-                    points.push(sourcePos);
-                    
-                    // Add cable points
-                    cables.forEach((cable, index) => {
-                        const cablePoints = cable.getPoints(20);
-                        if (index === 0) {
-                            points.push(...cablePoints);
-                        } else {
-                            // Skip first point to avoid duplication
-                            points.push(...cablePoints.slice(1));
-                        }
-                    });
-                    
-                    // Make sure path ends at pod
-                    if (points[points.length - 1].distanceTo(podPos) > 0.1) {
-                        points.push(podPos);
-                    }
-                    
-                    combinedPath = new THREE.CatmullRomCurve3(points);
+                if (iptablesToPodLine && iptablesToPodLine.userData.cable) {
+                    // Follow the iptables cable path
+                    combinedPath = iptablesToPodLine.userData.cable;
                 } else {
-                    // Fallback: create simple path if no cables found
-                    combinedPath = new THREE.CatmullRomCurve3([sourcePos, podPos]);
+                    // Fallback to direct path
+                    const midPoint = new THREE.Vector3(
+                        (sourcePos.x + podPos.x) / 2,
+                        Math.max(sourcePos.y, podPos.y) + 1,
+                        (sourcePos.z + podPos.z) / 2
+                    );
+                    combinedPath = new THREE.CatmullRomCurve3([sourcePos, midPoint, podPos]);
                 }
                 
                 // Create a small white pearl particle (20% of previous size)
@@ -1558,8 +1545,8 @@
                     nodeBox.add(nodeLabel); 
                     group.add(nodeBox);
                     
-                    // Add kube-proxy visualization (larger router icon)
-                    const kubeProxyGeom = new THREE.BoxGeometry(2.0, 1.0, 2.0); // Made 2.5x larger
+                    // Add kube-proxy visualization (small rule manager)
+                    const kubeProxyGeom = new THREE.BoxGeometry(0.8, 0.4, 0.8); // 40% of enlarged size
                     const kubeProxyMat = new THREE.MeshLambertMaterial({
                         color: 0x00BCD4, // Network color
                         emissive: 0x00BCD4,
@@ -1578,6 +1565,23 @@
                     
                     group.add(kubeProxy);
                     node.kubeProxy = kubeProxy; // Store reference for animations
+                    
+                    // Add iptables visualization (routing rules box)
+                    const iptablesGeom = new THREE.BoxGeometry(1.2, 0.3, 0.8);
+                    const iptablesMat = new THREE.MeshLambertMaterial({
+                        color: 0xFF6B6B, // Red-orange for iptables
+                        emissive: 0xFF6B6B,
+                        emissiveIntensity: 0.1
+                    });
+                    const iptables = new THREE.Mesh(iptablesGeom, iptablesMat);
+                    iptables.position.set(-width/2 + 0.8, height/2 - 0.3, 0); // Inside edge of node
+                    
+                    const iptablesLabel = createHtmlLabel('iptables', new THREE.Vector3(0, 0.3, 0));
+                    iptablesLabel.element.style.fontSize = '11px';
+                    iptables.add(iptablesLabel);
+                    
+                    group.add(iptables);
+                    node.iptables = iptables; // Store reference
                     
                     mesh = group;
                 } 
@@ -1875,19 +1879,19 @@
                         
                         clusterState.nodes.filter(n => n.type === 'worker').forEach(node => {
                             const nodeMesh = threeObjects.get(node.id);
-                            if (nodeMesh && node.kubeProxy) {
-                                const nodePos = new THREE.Vector3();
-                                node.kubeProxy.getWorldPosition(nodePos);
+                            if (nodeMesh && node.iptables) {
+                                const iptablesPos = new THREE.Vector3();
+                                node.iptables.getWorldPosition(iptablesPos);
                                 
                                 // Create droopy cable connection
                                 const cable = new THREE.CatmullRomCurve3([
                                     lbPos,
                                     new THREE.Vector3(
-                                        (lbPos.x + nodePos.x) / 2,
-                                        Math.min(lbPos.y, nodePos.y) - 2, // Droop down
-                                        (lbPos.z + nodePos.z) / 2
+                                        (lbPos.x + iptablesPos.x) / 2,
+                                        Math.min(lbPos.y, iptablesPos.y) - 2, // Droop down
+                                        (lbPos.z + iptablesPos.z) / 2
                                     ),
-                                    nodePos
+                                    iptablesPos
                                 ]);
                                 
                                 const cablePoints = cable.getPoints(30);
@@ -1926,41 +1930,41 @@
                         const podPos = new THREE.Vector3();
                         podMesh.getWorldPosition(podPos);
                         
-                        // Only create kube-proxy to pod connections (no service visuals)
+                        // Create connections from iptables to pods (representing routing rules)
                         const pod = Object.values(clusterState.pods).find(p => threeObjects.get(p.id) === podMesh);
                         if (pod && pod.nodeId) {
                             const node = clusterState.nodes.find(n => n.id === pod.nodeId);
-                            if (node && node.kubeProxy) {
-                                const kubeProxyPos = new THREE.Vector3();
-                                node.kubeProxy.getWorldPosition(kubeProxyPos);
+                            if (node && node.iptables) {
+                                const iptablesPos = new THREE.Vector3();
+                                node.iptables.getWorldPosition(iptablesPos);
                                 
-                                // Create droopy cable from kube-proxy to pod
-                                const kubeProxyToPodCable = new THREE.CatmullRomCurve3([
-                                    kubeProxyPos,
+                                // Create thin line from iptables to pod (representing routing rule)
+                                const iptablesToPodCable = new THREE.CatmullRomCurve3([
+                                    iptablesPos,
                                     new THREE.Vector3(
-                                        (kubeProxyPos.x + podPos.x) / 2,
-                                        Math.min(kubeProxyPos.y, podPos.y) - 0.5, // Smaller droop for shorter distance
-                                        (kubeProxyPos.z + podPos.z) / 2
+                                        (iptablesPos.x + podPos.x) / 2,
+                                        Math.min(iptablesPos.y, podPos.y) - 0.3,
+                                        (iptablesPos.z + podPos.z) / 2
                                     ),
                                     podPos
                                 ]);
                                 
-                                const proxyPodCablePoints = kubeProxyToPodCable.getPoints(15);
-                                const proxyPodLineGeom = new THREE.BufferGeometry().setFromPoints(proxyPodCablePoints);
-                                const proxyPodLineMat = new THREE.LineBasicMaterial({
-                                    color: 0x00BCD4, // Cyan for kube-proxy connections
+                                const cablePoints = iptablesToPodCable.getPoints(15);
+                                const lineGeom = new THREE.BufferGeometry().setFromPoints(cablePoints);
+                                const lineMat = new THREE.LineBasicMaterial({
+                                    color: 0xFF6B6B, // Match iptables color
                                     transparent: true,
                                     opacity: 0.3,
-                                    linewidth: 2
+                                    linewidth: 1
                                 });
-                                const proxyPodLine = new THREE.Line(proxyPodLineGeom, proxyPodLineMat);
-                                proxyPodLine.userData.cable = kubeProxyToPodCable; // Store the cable curve
-                                proxyPodLine.userData.type = 'kubeproxy-to-pod';
-                                proxyPodLine.userData.podId = podMesh.userData.podId;
-                                proxyPodLine.userData.nodeId = node.id;
-                                proxyPodLine.visible = srv.isVisible;
-                                scene.add(proxyPodLine);
-                                srv.networkLines.push(proxyPodLine);
+                                const line = new THREE.Line(lineGeom, lineMat);
+                                line.userData.cable = iptablesToPodCable;
+                                line.userData.type = 'iptables-to-pod';
+                                line.userData.podId = pod.id;
+                                line.userData.nodeId = node.id;
+                                line.visible = srv.isVisible;
+                                scene.add(line);
+                                srv.networkLines.push(line);
                             }
                         }
                     });
