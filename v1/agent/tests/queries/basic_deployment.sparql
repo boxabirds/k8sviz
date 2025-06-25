@@ -1,0 +1,58 @@
+# Query: Create a basic web application deployment with 3 replicas
+# This query retrieves the necessary information to generate a Deployment YAML
+
+PREFIX k8s: <http://kubernetes.io/ontology#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?resource ?property ?value ?comment
+WHERE {
+  # Find Deployment resource
+  ?deployment a k8s:Deployment ;
+              rdfs:label ?deploymentLabel ;
+              rdfs:comment ?deploymentComment .
+  
+  # Get deployment properties
+  {
+    SELECT ?property ?propertyLabel ?propertyComment
+    WHERE {
+      ?property rdfs:domain k8s:Deployment ;
+                rdfs:label ?propertyLabel ;
+                rdfs:comment ?propertyComment .
+    }
+  }
+  
+  # Get Pod template requirements
+  UNION
+  {
+    SELECT ?pod ?podProperty ?podComment
+    WHERE {
+      k8s:Pod rdfs:comment ?podComment .
+      ?podProperty rdfs:domain k8s:Pod ;
+                   rdfs:label ?podPropertyLabel .
+    }
+  }
+  
+  # Get Container requirements
+  UNION
+  {
+    SELECT ?container ?containerProperty ?containerComment
+    WHERE {
+      k8s:Container rdfs:comment ?containerComment .
+      ?containerProperty rdfs:domain k8s:Container ;
+                         rdfs:label ?containerPropertyLabel .
+    }
+  }
+  
+  # Get best practices
+  UNION
+  {
+    SELECT ?practice ?practiceLabel ?practiceComment
+    WHERE {
+      ?practice a k8s:BestPractice ;
+                rdfs:label ?practiceLabel ;
+                rdfs:comment ?practiceComment .
+      FILTER(CONTAINS(LCASE(STR(?practiceComment)), "deployment") || 
+             CONTAINS(LCASE(STR(?practiceComment)), "workload"))
+    }
+  }
+}

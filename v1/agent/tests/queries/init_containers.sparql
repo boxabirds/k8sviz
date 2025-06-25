@@ -1,0 +1,39 @@
+# Query: Deployment with init containers for setup tasks
+# This query retrieves information about init containers and their usage
+
+PREFIX k8s: <http://kubernetes.io/ontology#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?resource ?property ?value ?comment
+WHERE {
+  # Get init container information
+  {
+    k8s:hasInitContainer rdfs:label ?label ;
+                        rdfs:comment ?comment .
+  }
+  
+  # Get container properties relevant to init containers
+  UNION
+  {
+    ?property rdfs:domain k8s:Container ;
+              rdfs:label ?propertyLabel ;
+              rdfs:comment ?propertyComment .
+    FILTER(CONTAINS(STR(?property), "container"))
+  }
+  
+  # Get Pod lifecycle information
+  UNION
+  {
+    k8s:Pod rdfs:comment ?podComment .
+    FILTER(CONTAINS(LCASE(STR(?podComment)), "container"))
+  }
+  
+  # Get best practices for init containers
+  UNION
+  {
+    ?practice a k8s:BestPractice ;
+              rdfs:comment ?practiceComment .
+    FILTER(CONTAINS(LCASE(STR(?practiceComment)), "init") || 
+           CONTAINS(LCASE(STR(?practiceComment)), "startup"))
+  }
+}

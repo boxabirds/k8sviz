@@ -1,0 +1,33 @@
+# Query: Configure horizontal pod autoscaling for a deployment
+# This query retrieves HPA configuration information
+
+PREFIX k8s: <http://kubernetes.io/ontology#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?resource ?property ?value ?comment
+WHERE {
+  # Get HPA information
+  {
+    k8s:HorizontalPodAutoscaler a owl:Class ;
+                                rdfs:comment ?hpaComment .
+    
+    ?property rdfs:domain k8s:HorizontalPodAutoscaler ;
+              rdfs:label ?propertyLabel ;
+              rdfs:comment ?propertyComment .
+  }
+  
+  # Get scalable resources
+  UNION
+  {
+    ?scalable rdfs:subClassOf k8s:WorkloadResource .
+    k8s:HorizontalPodAutoscaler k8s:scales ?scalable .
+  }
+  
+  # Get HPA constraints
+  UNION
+  {
+    ?constraint rdfs:comment ?constraintComment .
+    FILTER(CONTAINS(LCASE(STR(?constraintComment)), "autoscaler") || 
+           CONTAINS(LCASE(STR(?constraintComment)), "hpa"))
+  }
+}

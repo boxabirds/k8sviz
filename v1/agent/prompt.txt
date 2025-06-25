@@ -1,0 +1,62 @@
+# Kubernetes Knowledge Graph Creation Task
+
+## Objective
+Create an ultra-dense, compact, highly structured Turtle (TTL) knowledge graph of Kubernetes knowledge that can be used to programmatically generate Kubernetes configurations from plain English conversations.
+
+## Requirements
+
+### 1. Knowledge Graph Structure
+- Format: RDF/Turtle (.ttl)
+- Must contain ALL Kubernetes concepts, relationships, and rules
+- Each fact must have provenance (links to official docs)
+- 100% accuracy required
+
+### 2. Coverage Areas
+- Core concepts (Pods, Deployments, Services, etc.)
+- Networking (CNI, Ingress, Network Policies)
+- Storage (PV, PVC, StorageClasses)
+- Security (RBAC, PSP, Network Policies)
+- Workload types (Deployments, StatefulSets, DaemonSets, Jobs, CronJobs)
+- Configuration (ConfigMaps, Secrets)
+- Resource management (Limits, Requests, QoS)
+- Scheduling (Affinity, Taints, Tolerations)
+- Observability (Probes, Metrics, Logging)
+- Multi-tenancy (Namespaces, Resource Quotas)
+- API versions and compatibility
+- Cloud provider integrations
+
+### 3. Testing Requirements
+- Test suite with dozens of test cases
+- Format: RDF query → expected YAML output
+- Must validate 100% correctness
+- Cover edge cases and complex scenarios
+
+### 4. Supporting Documentation
+- Example YAML files for different configurations
+- Terraform examples
+- Helm chart patterns
+- Best practices documentation
+
+### 5. Use Cases
+The knowledge graph should support queries like:
+- "Create a k8s cluster that hosts a web application with auto-scaling"
+- "Set up a stateful database with persistent storage and backups"
+- "Configure a microservices architecture with service mesh"
+- "Implement zero-downtime deployments with rolling updates"
+- "Set up multi-tenant isolation with network policies"
+
+## Deliverables
+1. `/agent/knowledge/kubernetes.ttl` - Main knowledge graph
+2. `/agent/tests/` - Test queries and expected outputs
+3. `/agent/examples/` - Example configurations
+4. `/agent/docs/` - Supporting documentation
+5. `/agent/validation/` - Validation scripts
+
+## Process
+1. Research official Kubernetes documentation
+2. Extract concepts and relationships
+3. Model in RDF/Turtle format
+4. Add provenance links
+5. Create test cases
+6. Validate accuracy
+7. Document patterns and best practices

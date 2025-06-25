@@ -1,0 +1,52 @@
+# Query: Create RBAC configuration for a service account
+# This query retrieves RBAC resources and relationships
+
+PREFIX k8s: <http://kubernetes.io/ontology#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?resource ?property ?value ?comment ?constraint
+WHERE {
+  # Get RBAC resources
+  {
+    ?rbacResource rdfs:subClassOf k8s:APIObject ;
+                  rdfs:label ?label ;
+                  rdfs:comment ?comment .
+    FILTER(CONTAINS(STR(?rbacResource), "Role") || 
+           CONTAINS(STR(?rbacResource), "ServiceAccount"))
+  }
+  
+  # Get RBAC properties
+  UNION
+  {
+    ?property rdfs:label ?propertyLabel ;
+              rdfs:comment ?propertyComment .
+    FILTER(CONTAINS(STR(?property), "role") || 
+           CONTAINS(STR(?property), "permission") ||
+           CONTAINS(STR(?property), "subject"))
+  }
+  
+  # Get RBAC verbs
+  UNION
+  {
+    ?verb a k8s:RBACVerb ;
+          rdfs:label ?verbLabel .
+  }
+  
+  # Get RBAC constraints
+  UNION
+  {
+    ?constraint rdfs:label ?constraintLabel ;
+                rdfs:comment ?constraintComment .
+    FILTER(CONTAINS(LCASE(STR(?constraintComment)), "rbac") || 
+           CONTAINS(LCASE(STR(?constraintComment)), "permission"))
+  }
+  
+  # Get RBAC best practices
+  UNION
+  {
+    ?practice a k8s:BestPractice ;
+              rdfs:comment ?practiceComment .
+    FILTER(CONTAINS(LCASE(STR(?practiceComment)), "rbac") || 
+           CONTAINS(LCASE(STR(?practiceComment)), "privilege"))
+  }
+}

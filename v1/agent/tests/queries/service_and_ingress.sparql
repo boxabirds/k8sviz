@@ -1,0 +1,42 @@
+# Query: Create a Service and Ingress for external access
+# This query retrieves information for exposing an application
+
+PREFIX k8s: <http://kubernetes.io/ontology#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?resource ?property ?value ?comment
+WHERE {
+  # Get Service information
+  {
+    k8s:Service a owl:Class ;
+                rdfs:comment ?serviceComment .
+    
+    ?serviceType a k8s:ServiceType ;
+                 rdfs:label ?serviceTypeLabel ;
+                 rdfs:comment ?serviceTypeComment .
+  }
+  
+  # Get Service properties
+  UNION
+  {
+    ?property rdfs:domain k8s:Service ;
+              rdfs:label ?propertyLabel ;
+              rdfs:comment ?propertyComment .
+  }
+  
+  # Get selector information
+  UNION
+  {
+    k8s:Selector rdfs:comment ?selectorComment .
+    k8s:selectsPod rdfs:comment ?selectsPodComment .
+  }
+  
+  # Get networking best practices
+  UNION
+  {
+    ?practice a k8s:BestPractice ;
+              rdfs:comment ?practiceComment .
+    FILTER(CONTAINS(LCASE(STR(?practiceComment)), "service") || 
+           CONTAINS(LCASE(STR(?practiceComment)), "network"))
+  }
+}

@@ -618,6 +618,58 @@
             padding: 6px 12px;
         }
         
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--ui-bg-light);
+            padding: 6px 12px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--ui-border);
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        .toggle-container label {
+            margin: 0;
+            color: var(--ui-text);
+            cursor: pointer;
+            display: inline;
+        }
+        
+        .toggle-container input[type="checkbox"] {
+            width: 40px;
+            height: 20px;
+            position: relative;
+            appearance: none;
+            background: var(--ui-bg);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            border: 1px solid var(--ui-border);
+            margin: 0;
+        }
+        
+        .toggle-container input[type="checkbox"]:checked {
+            background: var(--ui-accent);
+        }
+        
+        .toggle-container input[type="checkbox"]:before {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: white;
+            top: 1px;
+            left: 2px;
+            transition: transform 0.3s ease;
+        }
+        
+        .toggle-container input[type="checkbox"]:checked:before {
+            transform: translateX(20px);
+        }
+        
         input[type="range"] {
             width: 100%;
             margin: var(--spacing-sm) 0;
@@ -654,10 +706,14 @@
         </div>
     </div>
     <div id="top-bar">
-        <div>
+        <div style="display: flex; gap: 10px; align-items: center;">
             <button id="add-worker-btn" data-label="Add Worker">Add Worker</button>
             <button id="remove-worker-btn" data-label="Remove Worker">Remove Worker</button>
             <button id="pause-btn">Pause</button>
+            <div class="toggle-container">
+                <label for="labels-toggle">All labels visible</label>
+                <input type="checkbox" id="labels-toggle" checked>
+            </div>
         </div>
         <div id="label-mode-indicator">
             <span id="label-mode-text">Kubernetes Terminology Mode</span>
@@ -818,6 +874,8 @@
 
             const clusterState = { nodes: [], pods: {}, deployments: {}, services: {}, isPaused: false, nextId: 0, selectedServiceId: null };
             let scene, camera, renderer, controls, raycaster, mouse, labelRenderer;
+            let allLabelsVisible = true;
+            let hoveredObject = null;
             const threeObjects = new Map();
             let draggedPod = null, originalPodState = {}, hasDragged = false, currentTool = 'navigate';
             let useIntuitive = false; // Initialize label mode
@@ -1503,6 +1561,7 @@
                 }
                 const label = new THREE.CSS2DObject(div); 
                 label.position.copy(pos); 
+                label.visible = allLabelsVisible; // Respect the visibility setting
                 return label; 
             }
 
@@ -1819,7 +1878,6 @@
                     
                     if (podMeshes.length === 0) { 
                         if (depBoxVisual) { 
-                            scene.remove(depBoxVisual.label); 
                             scene.remove(depBoxVisual); 
                             threeObjects.delete(`dep-${dep.id}`); 
                         } 
@@ -1851,9 +1909,9 @@
                         label.element.classList.add('deployment-label'); 
                         label.element.style.color = colorHex; 
                         label.element.style.borderColor = colorHex; 
+                        depBoxVisual.add(label); // Add label as child of deployment box
                         depBoxVisual.label = label; 
                         scene.add(depBoxVisual); 
-                        scene.add(label); 
                         threeObjects.set(`dep-${dep.id}`, depBoxVisual); 
                     } 
                     
@@ -1872,7 +1930,8 @@
                             size.z + padding
                         ); 
                         depBoxVisual.position.copy(center); 
-                        depBoxVisual.label.position.set(center.x, boundingBox.max.y + 1, center.z);
+                        // Label position is now relative to deployment box
+                        depBoxVisual.label.position.set(0, (size.y + padding) / 2 + 0.5, 0);
                         depBoxVisual.visible = dep.isVisible;
                         depBoxVisual.label.visible = dep.isVisible;
                     }
@@ -2149,7 +2208,65 @@
                     }
                 }
             }
-            function onPointerMove(event) { if (!draggedPod) return; if (!hasDragged) { hasDragged = true; document.body.style.cursor = 'grabbing'; const worldPos = new THREE.Vector3(); draggedPod.getWorldPosition(worldPos); scene.attach(draggedPod); draggedPod.position.copy(worldPos); } const intersects = getIntersects(event); const planeIntersect = intersects.find(i => i.object.userData.type === 'node'); if (planeIntersect) draggedPod.position.set(planeIntersect.point.x, draggedPod.position.y, planeIntersect.point.z); else { const pos = new THREE.Vector3(); raycaster.ray.at(10, pos); draggedPod.position.copy(pos); } }
+            function onPointerMove(event) {
+                // Handle drag functionality
+                if (draggedPod) {
+                    if (!hasDragged) {
+                        hasDragged = true;
+                        document.body.style.cursor = 'grabbing';
+                        const worldPos = new THREE.Vector3();
+                        draggedPod.getWorldPosition(worldPos);
+                        scene.attach(draggedPod);
+                        draggedPod.position.copy(worldPos);
+                    }
+                    const intersects = getIntersects(event);
+                    const planeIntersect = intersects.find(i => i.object.userData.type === 'node');
+                    if (planeIntersect) draggedPod.position.set(planeIntersect.point.x, draggedPod.position.y, planeIntersect.point.z);
+                    else {
+                        const pos = new THREE.Vector3();
+                        raycaster.ray.at(10, pos);
+                        draggedPod.position.copy(pos);
+                    }
+                    return;
+                }
+                
+                // Handle hover functionality for labels when allLabelsVisible is false
+                if (!allLabelsVisible) {
+                    const intersects = getIntersects(event);
+                    const hoveredObjects = new Set();
+                    
+                    // Collect all objects with labels that are being hovered
+                    for (let i = 0; i < intersects.length; i++) {
+                        let obj = intersects[i].object;
+                        
+                        // Check object and its parents for labels
+                        while (obj && obj !== scene) {
+                            if (obj.children) {
+                                const hasLabel = obj.children.some(child => child.isCSS2DObject);
+                                if (hasLabel) {
+                                    hoveredObjects.add(obj);
+                                }
+                            }
+                            obj = obj.parent;
+                        }
+                    }
+                    
+                    // Update visibility for all objects with labels
+                    scene.traverse((obj) => {
+                        if (obj.children) {
+                            obj.children.forEach(child => {
+                                if (child.isCSS2DObject && child.visible !== undefined) {
+                                    // Show label if object is hovered, hide otherwise
+                                    child.visible = hoveredObjects.has(obj);
+                                }
+                            });
+                        }
+                    });
+                    
+                    // Store hovered objects for reference
+                    hoveredObject = hoveredObjects.size > 0 ? Array.from(hoveredObjects)[0] : null;
+                }
+            }
             function onPointerUp(event) {
                 
                 if (currentTool !== 'select') return; 
@@ -2569,6 +2686,12 @@
                             });
                             document.getElementById('close-inspector-btn').addEventListener('click', hideInspector);
                             document.getElementById('pause-btn').addEventListener('click', () => { clusterState.isPaused = !clusterState.isPaused; document.getElementById('pause-btn').textContent = clusterState.isPaused ? 'Resume' : 'Pause'; });
+                            
+                            // Labels toggle handler
+                            document.getElementById('labels-toggle').addEventListener('change', (e) => {
+                                allLabelsVisible = e.target.checked;
+                                updateAllLabelsVisibility();
+                            });
                             document.getElementById('replica-slider').addEventListener('input', e => document.getElementById('replica-count-label').textContent = e.target.value);
                             // Remove old toggle button listener as we now have unified panels
                             document.getElementById('select-tool').addEventListener('click', () => setTool('select'));
@@ -2816,6 +2939,20 @@
                             child.element.textContent = getLabel('Load Balancer') + ' (External)';
                         }
                     });
+                }
+            }
+            
+            // Update visibility of all labels
+            function updateAllLabelsVisibility() {
+                scene.traverse((object) => {
+                    if (object.isCSS2DObject) {
+                        object.visible = allLabelsVisible;
+                    }
+                });
+                
+                // Clear hover state when toggling on
+                if (allLabelsVisible && hoveredObject) {
+                    hoveredObject = null;
                 }
             }
             

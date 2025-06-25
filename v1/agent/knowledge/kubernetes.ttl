@@ -1,0 +1,1310 @@
+@prefix k8s: <http://kubernetes.io/ontology#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+# ============================================================================
+# Kubernetes Ontology Definition
+# ============================================================================
+# This knowledge graph represents Kubernetes concepts, resources, and their
+# relationships for generating Kubernetes configurations from natural language.
+# All facts include provenance links to official Kubernetes documentation.
+# ============================================================================
+
+# Ontology Metadata
+k8s: a owl:Ontology ;
+    rdfs:label "Kubernetes Ontology"@en ;
+    rdfs:comment "Comprehensive ontology for Kubernetes resources, concepts, and relationships"@en ;
+    dcterms:created "2025-06-25"^^xsd:date ;
+    dcterms:source <https://kubernetes.io/docs/> ;
+    owl:versionInfo "1.0.0" .
+
+# ============================================================================
+# Core Classes
+# ============================================================================
+
+# Base Resource Class
+k8s:Resource a owl:Class ;
+    rdfs:label "Resource"@en ;
+    rdfs:comment "Base class for all Kubernetes resources"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/overview/kubernetes-api/> .
+
+# API Object Class
+k8s:APIObject a owl:Class ;
+    rdfs:subClassOf k8s:Resource ;
+    rdfs:label "API Object"@en ;
+    rdfs:comment "Kubernetes API object that can be created, updated, and deleted"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/overview/kubernetes-api/> .
+
+# Workload Resources
+k8s:WorkloadResource a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "Workload Resource"@en ;
+    rdfs:comment "Resources that manage and run containers on the cluster"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/> .
+
+# ============================================================================
+# Core Workload Resources
+# ============================================================================
+
+# Pod
+k8s:Pod a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "Pod"@en ;
+    rdfs:comment "The smallest deployable unit of computing in Kubernetes, consisting of one or more containers"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/pods/> .
+
+# Pod Properties
+k8s:hasContainer a owl:ObjectProperty ;
+    rdfs:domain k8s:Pod ;
+    rdfs:range k8s:Container ;
+    rdfs:label "has container"@en ;
+    rdfs:comment "Specifies containers within a Pod"@en .
+
+k8s:hasInitContainer a owl:ObjectProperty ;
+    rdfs:domain k8s:Pod ;
+    rdfs:range k8s:Container ;
+    rdfs:label "has init container"@en ;
+    rdfs:comment "Specifies init containers that run before application containers"@en .
+
+k8s:hasVolume a owl:ObjectProperty ;
+    rdfs:domain k8s:Pod ;
+    rdfs:range k8s:Volume ;
+    rdfs:label "has volume"@en ;
+    rdfs:comment "Specifies volumes available to containers in the Pod"@en .
+
+k8s:podIPAddress a owl:DatatypeProperty ;
+    rdfs:domain k8s:Pod ;
+    rdfs:range xsd:string ;
+    rdfs:label "pod IP address"@en ;
+    rdfs:comment "Unique IP address assigned to each Pod"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/pods/> .
+
+# Deployment
+k8s:Deployment a owl:Class ;
+    rdfs:subClassOf k8s:WorkloadResource ;
+    rdfs:label "Deployment"@en ;
+    rdfs:comment "Manages a set of Pods to run an application workload, providing declarative updates"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/deployment/> .
+
+# Deployment Properties
+k8s:managesReplicaSet a owl:ObjectProperty ;
+    rdfs:domain k8s:Deployment ;
+    rdfs:range k8s:ReplicaSet ;
+    rdfs:label "manages ReplicaSet"@en ;
+    rdfs:comment "Deployment creates and manages ReplicaSets"@en .
+
+k8s:replicas a owl:DatatypeProperty ;
+    rdfs:domain k8s:Deployment ;
+    rdfs:range xsd:integer ;
+    rdfs:label "replicas"@en ;
+    rdfs:comment "Number of desired Pod instances"@en .
+
+k8s:updateStrategy a owl:ObjectProperty ;
+    rdfs:domain k8s:Deployment ;
+    rdfs:range k8s:UpdateStrategy ;
+    rdfs:label "update strategy"@en ;
+    rdfs:comment "Strategy for updating Pods during deployment updates"@en .
+
+# ReplicaSet
+k8s:ReplicaSet a owl:Class ;
+    rdfs:subClassOf k8s:WorkloadResource ;
+    rdfs:label "ReplicaSet"@en ;
+    rdfs:comment "Maintains a stable set of replica Pods running at any given time"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/> .
+
+k8s:managesPod a owl:ObjectProperty ;
+    rdfs:domain k8s:ReplicaSet ;
+    rdfs:range k8s:Pod ;
+    rdfs:label "manages Pod"@en ;
+    rdfs:comment "ReplicaSet creates and manages Pods"@en .
+
+# StatefulSet
+k8s:StatefulSet a owl:Class ;
+    rdfs:subClassOf k8s:WorkloadResource ;
+    rdfs:label "StatefulSet"@en ;
+    rdfs:comment "Manages stateful applications with stable network identifiers and persistent storage"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/> .
+
+# StatefulSet Properties
+k8s:hasStableNetworkID a owl:DatatypeProperty ;
+    rdfs:domain k8s:StatefulSet ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "has stable network ID"@en ;
+    rdfs:comment "Pods in StatefulSet have stable, unique network identifiers"@en ;
+    owl:hasValue true .
+
+k8s:hasOrderedDeployment a owl:DatatypeProperty ;
+    rdfs:domain k8s:StatefulSet ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "has ordered deployment"@en ;
+    rdfs:comment "Pods are deployed and scaled in order"@en ;
+    owl:hasValue true .
+
+k8s:hasPersistentStorage a owl:DatatypeProperty ;
+    rdfs:domain k8s:StatefulSet ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "has persistent storage"@en ;
+    rdfs:comment "Supports stable, persistent storage for each Pod"@en ;
+    owl:hasValue true .
+
+# ============================================================================
+# Networking Resources
+# ============================================================================
+
+# Service
+k8s:Service a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "Service"@en ;
+    rdfs:comment "Exposes groups of Pods over a network with a stable endpoint"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/service/> .
+
+# Service Types
+k8s:ServiceType a owl:Class ;
+    rdfs:label "Service Type"@en ;
+    rdfs:comment "Type of Kubernetes Service"@en .
+
+k8s:ClusterIP a k8s:ServiceType ;
+    rdfs:label "ClusterIP"@en ;
+    rdfs:comment "Default service type, exposes service internally within cluster"@en .
+
+k8s:NodePort a k8s:ServiceType ;
+    rdfs:label "NodePort"@en ;
+    rdfs:comment "Exposes service on each node's IP at a static port"@en .
+
+k8s:LoadBalancer a k8s:ServiceType ;
+    rdfs:label "LoadBalancer"@en ;
+    rdfs:comment "Provisions an external load balancer"@en .
+
+k8s:ExternalName a k8s:ServiceType ;
+    rdfs:label "ExternalName"@en ;
+    rdfs:comment "Maps service to an external DNS name"@en .
+
+# Service Properties
+k8s:serviceType a owl:ObjectProperty ;
+    rdfs:domain k8s:Service ;
+    rdfs:range k8s:ServiceType ;
+    rdfs:label "service type"@en .
+
+k8s:selectsPod a owl:ObjectProperty ;
+    rdfs:domain k8s:Service ;
+    rdfs:range k8s:Pod ;
+    rdfs:label "selects Pod"@en ;
+    rdfs:comment "Service uses label selectors to determine which Pods to include"@en .
+
+k8s:clusterIP a owl:DatatypeProperty ;
+    rdfs:domain k8s:Service ;
+    rdfs:range xsd:string ;
+    rdfs:label "cluster IP"@en ;
+    rdfs:comment "Stable IP address assigned to the Service"@en .
+
+# ============================================================================
+# Storage Resources
+# ============================================================================
+
+# PersistentVolume
+k8s:PersistentVolume a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "PersistentVolume"@en ;
+    rdfs:comment "Piece of storage in the cluster provisioned by administrator or dynamically"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/storage/persistent-volumes/> .
+
+# PersistentVolumeClaim
+k8s:PersistentVolumeClaim a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "PersistentVolumeClaim"@en ;
+    rdfs:comment "Request for storage by a user, must exist in same namespace as Pod"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/storage/persistent-volumes/> .
+
+# Storage Properties
+k8s:bindsToPV a owl:ObjectProperty ;
+    rdfs:domain k8s:PersistentVolumeClaim ;
+    rdfs:range k8s:PersistentVolume ;
+    rdfs:label "binds to PV"@en ;
+    rdfs:comment "PVC binds to a PV to access storage"@en .
+
+k8s:accessMode a owl:ObjectProperty ;
+    rdfs:domain k8s:PersistentVolume ;
+    rdfs:range k8s:AccessMode ;
+    rdfs:label "access mode"@en .
+
+# Access Modes
+k8s:AccessMode a owl:Class ;
+    rdfs:label "Access Mode"@en ;
+    rdfs:comment "Storage access mode"@en .
+
+k8s:ReadWriteOnce a k8s:AccessMode ;
+    rdfs:label "ReadWriteOnce"@en ;
+    rdfs:comment "Volume can be mounted as read-write by a single node"@en .
+
+k8s:ReadOnlyMany a k8s:AccessMode ;
+    rdfs:label "ReadOnlyMany"@en ;
+    rdfs:comment "Volume can be mounted as read-only by many nodes"@en .
+
+k8s:ReadWriteMany a k8s:AccessMode ;
+    rdfs:label "ReadWriteMany"@en ;
+    rdfs:comment "Volume can be mounted as read-write by many nodes"@en .
+
+# ============================================================================
+# Configuration Resources
+# ============================================================================
+
+# ConfigMap
+k8s:ConfigMap a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "ConfigMap"@en ;
+    rdfs:comment "Provides configuration data to Pods, namespace-scoped, max 1 MiB"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/configuration/configmap/> .
+
+# Secret
+k8s:Secret a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "Secret"@en ;
+    rdfs:comment "Stores sensitive data like passwords and tokens, namespace-scoped"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/configuration/secret/> .
+
+# Configuration Properties
+k8s:mountsConfigMap a owl:ObjectProperty ;
+    rdfs:domain k8s:Pod ;
+    rdfs:range k8s:ConfigMap ;
+    rdfs:label "mounts ConfigMap"@en ;
+    rdfs:comment "Pod can mount ConfigMap as volume or environment variables"@en .
+
+k8s:mountsSecret a owl:ObjectProperty ;
+    rdfs:domain k8s:Pod ;
+    rdfs:range k8s:Secret ;
+    rdfs:label "mounts Secret"@en ;
+    rdfs:comment "Pod can mount Secret as volume or environment variables"@en .
+
+# ============================================================================
+# Organizational Resources
+# ============================================================================
+
+# Namespace
+k8s:Namespace a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "Namespace"@en ;
+    rdfs:comment "Provides isolation for groups of resources within a cluster"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/> .
+
+# Namespace Properties
+k8s:inNamespace a owl:ObjectProperty ;
+    rdfs:domain k8s:APIObject ;
+    rdfs:range k8s:Namespace ;
+    rdfs:label "in namespace"@en ;
+    rdfs:comment "Resource exists within a specific namespace"@en .
+
+# ============================================================================
+# Container Properties
+# ============================================================================
+
+k8s:Container a owl:Class ;
+    rdfs:label "Container"@en ;
+    rdfs:comment "Application container running in a Pod"@en .
+
+k8s:containerImage a owl:DatatypeProperty ;
+    rdfs:domain k8s:Container ;
+    rdfs:range xsd:string ;
+    rdfs:label "container image"@en ;
+    rdfs:comment "Docker image for the container"@en .
+
+k8s:containerPort a owl:DatatypeProperty ;
+    rdfs:domain k8s:Container ;
+    rdfs:range xsd:integer ;
+    rdfs:label "container port"@en ;
+    rdfs:comment "Port exposed by the container"@en .
+
+k8s:resourceRequests a owl:ObjectProperty ;
+    rdfs:domain k8s:Container ;
+    rdfs:range k8s:ResourceRequirements ;
+    rdfs:label "resource requests"@en ;
+    rdfs:comment "Minimum resources required by container"@en .
+
+k8s:resourceLimits a owl:ObjectProperty ;
+    rdfs:domain k8s:Container ;
+    rdfs:range k8s:ResourceRequirements ;
+    rdfs:label "resource limits"@en ;
+    rdfs:comment "Maximum resources allowed for container"@en .
+
+# ============================================================================
+# Constraints and Rules
+# ============================================================================
+
+# Pod Constraints
+k8s:PodNameConstraint a owl:Class ;
+    rdfs:label "Pod Name Constraint"@en ;
+    rdfs:comment "Pod names must follow DNS subdomain rules"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/pods/> .
+
+k8s:PodImmutabilityConstraint a owl:Class ;
+    rdfs:label "Pod Immutability Constraint"@en ;
+    rdfs:comment "Most Pod metadata is immutable after creation"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/pods/> .
+
+# Namespace Constraints
+k8s:NamespaceScopeConstraint a owl:Class ;
+    rdfs:label "Namespace Scope Constraint"@en ;
+    rdfs:comment "ConfigMaps and Secrets can only be referenced by Pods in same namespace"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/configuration/configmap/> .
+
+# Storage Constraints
+k8s:PVClusterScopeConstraint a owl:Class ;
+    rdfs:label "PV Cluster Scope Constraint"@en ;
+    rdfs:comment "PersistentVolumes are cluster-scoped, not namespaced"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/storage/persistent-volumes/> .
+
+# Deployment Constraints
+k8s:DeploymentUpdateConstraint a owl:Class ;
+    rdfs:label "Deployment Update Constraint"@en ;
+    rdfs:comment "During rolling updates, at least 75% of desired Pods must be up"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/deployment/> .
+
+# ============================================================================
+# Relationships
+# ============================================================================
+
+# Hierarchical Relationships
+k8s:creates a owl:ObjectProperty ;
+    rdfs:label "creates"@en ;
+    rdfs:comment "Resource creates another resource"@en .
+
+k8s:manages a owl:ObjectProperty ;
+    rdfs:label "manages"@en ;
+    rdfs:comment "Resource manages lifecycle of another resource"@en .
+
+k8s:references a owl:ObjectProperty ;
+    rdfs:label "references"@en ;
+    rdfs:comment "Resource references another resource"@en .
+
+# Deployment creates ReplicaSet creates Pod
+k8s:Deployment k8s:creates k8s:ReplicaSet .
+k8s:ReplicaSet k8s:creates k8s:Pod .
+
+# StatefulSet creates Pods with stable identity
+k8s:StatefulSet k8s:creates k8s:Pod .
+
+# Service selects Pods
+k8s:Service k8s:selectsPod k8s:Pod .
+
+# Pod references ConfigMap and Secret
+k8s:Pod k8s:references k8s:ConfigMap .
+k8s:Pod k8s:references k8s:Secret .
+
+# PVC binds to PV
+k8s:PersistentVolumeClaim k8s:bindsToPV k8s:PersistentVolume .
+
+# ============================================================================
+# Best Practices
+# ============================================================================
+
+k8s:BestPractice a owl:Class ;
+    rdfs:label "Best Practice"@en ;
+    rdfs:comment "Recommended approach for using Kubernetes resources"@en .
+
+k8s:UseWorkloadResources a k8s:BestPractice ;
+    rdfs:label "Use Workload Resources"@en ;
+    rdfs:comment "Create Pods using workload resources like Deployments instead of directly"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/pods/> .
+
+k8s:MultiplePodsForScaling a k8s:BestPractice ;
+    rdfs:label "Multiple Pods for Scaling"@en ;
+    rdfs:comment "Create multiple Pods for horizontal scaling rather than multiple containers in one Pod"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/pods/> .
+
+k8s:UseSecretsForSensitiveData a k8s:BestPractice ;
+    rdfs:label "Use Secrets for Sensitive Data"@en ;
+    rdfs:comment "Use Secrets instead of ConfigMaps for confidential data"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/configuration/configmap/> .
+
+# ============================================================================
+# Labels and Selectors
+# ============================================================================
+
+k8s:Label a owl:Class ;
+    rdfs:label "Label"@en ;
+    rdfs:comment "Key-value pair attached to resources for identification and selection"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/> .
+
+k8s:hasLabel a owl:ObjectProperty ;
+    rdfs:domain k8s:APIObject ;
+    rdfs:range k8s:Label ;
+    rdfs:label "has label"@en ;
+    rdfs:comment "Resource has a label attached"@en .
+
+k8s:labelKey a owl:DatatypeProperty ;
+    rdfs:domain k8s:Label ;
+    rdfs:range xsd:string ;
+    rdfs:label "label key"@en .
+
+k8s:labelValue a owl:DatatypeProperty ;
+    rdfs:domain k8s:Label ;
+    rdfs:range xsd:string ;
+    rdfs:label "label value"@en .
+
+k8s:Selector a owl:Class ;
+    rdfs:label "Selector"@en ;
+    rdfs:comment "Mechanism to select resources based on labels"@en .
+
+k8s:hasSelector a owl:ObjectProperty ;
+    rdfs:domain k8s:APIObject ;
+    rdfs:range k8s:Selector ;
+    rdfs:label "has selector"@en ;
+    rdfs:comment "Resource uses a selector to identify other resources"@en .
+
+# ============================================================================
+# Additional Workload Resources
+# ============================================================================
+
+# Job
+k8s:Job a owl:Class ;
+    rdfs:subClassOf k8s:WorkloadResource ;
+    rdfs:label "Job"@en ;
+    rdfs:comment "Runs one-off tasks that run to completion and then stop"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/job/> .
+
+# Job Properties
+k8s:completions a owl:DatatypeProperty ;
+    rdfs:domain k8s:Job ;
+    rdfs:range xsd:integer ;
+    rdfs:label "completions"@en ;
+    rdfs:comment "Number of successful Pod completions required"@en .
+
+k8s:parallelism a owl:DatatypeProperty ;
+    rdfs:domain k8s:Job ;
+    rdfs:range xsd:integer ;
+    rdfs:label "parallelism"@en ;
+    rdfs:comment "Maximum number of Pods that can run in parallel"@en .
+
+k8s:backoffLimit a owl:DatatypeProperty ;
+    rdfs:domain k8s:Job ;
+    rdfs:range xsd:integer ;
+    rdfs:label "backoff limit"@en ;
+    rdfs:comment "Number of retries before marking Job as failed"@en .
+
+k8s:completionMode a owl:DatatypeProperty ;
+    rdfs:domain k8s:Job ;
+    rdfs:range xsd:string ;
+    rdfs:label "completion mode"@en ;
+    rdfs:comment "NonIndexed (default) or Indexed completion mode"@en .
+
+# CronJob
+k8s:CronJob a owl:Class ;
+    rdfs:subClassOf k8s:WorkloadResource ;
+    rdfs:label "CronJob"@en ;
+    rdfs:comment "Creates Jobs on a repeating schedule using cron format"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/> .
+
+# CronJob Properties
+k8s:schedule a owl:DatatypeProperty ;
+    rdfs:domain k8s:CronJob ;
+    rdfs:range xsd:string ;
+    rdfs:label "schedule"@en ;
+    rdfs:comment "Cron format schedule string (required)"@en .
+
+k8s:suspend a owl:DatatypeProperty ;
+    rdfs:domain k8s:CronJob ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "suspend"@en ;
+    rdfs:comment "Whether to suspend execution of Jobs"@en .
+
+k8s:successfulJobsHistoryLimit a owl:DatatypeProperty ;
+    rdfs:domain k8s:CronJob ;
+    rdfs:range xsd:integer ;
+    rdfs:label "successful jobs history limit"@en ;
+    rdfs:comment "Number of successful Jobs to keep (default: 3)"@en .
+
+k8s:failedJobsHistoryLimit a owl:DatatypeProperty ;
+    rdfs:domain k8s:CronJob ;
+    rdfs:range xsd:integer ;
+    rdfs:label "failed jobs history limit"@en ;
+    rdfs:comment "Number of failed Jobs to keep (default: 1)"@en .
+
+k8s:concurrencyPolicy a owl:DatatypeProperty ;
+    rdfs:domain k8s:CronJob ;
+    rdfs:range xsd:string ;
+    rdfs:label "concurrency policy"@en ;
+    rdfs:comment "How to handle concurrent Jobs: Allow, Forbid, or Replace"@en .
+
+# DaemonSet
+k8s:DaemonSet a owl:Class ;
+    rdfs:subClassOf k8s:WorkloadResource ;
+    rdfs:label "DaemonSet"@en ;
+    rdfs:comment "Ensures a Pod runs on all (or selected) nodes, for node-local facilities"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/> .
+
+# DaemonSet Properties
+k8s:nodeSelector a owl:ObjectProperty ;
+    rdfs:domain k8s:DaemonSet ;
+    rdfs:range k8s:NodeSelector ;
+    rdfs:label "node selector"@en ;
+    rdfs:comment "Limits DaemonSet to nodes matching selector"@en .
+
+k8s:hostPort a owl:DatatypeProperty ;
+    rdfs:domain k8s:Container ;
+    rdfs:range xsd:integer ;
+    rdfs:label "host port"@en ;
+    rdfs:comment "Port on the host to bind to container port"@en .
+
+# ============================================================================
+# Autoscaling Resources
+# ============================================================================
+
+# HorizontalPodAutoscaler
+k8s:HorizontalPodAutoscaler a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "HorizontalPodAutoscaler"@en ;
+    rdfs:comment "Automatically scales workload resources based on metrics"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/> .
+
+# HPA Properties
+k8s:scaleTargetRef a owl:ObjectProperty ;
+    rdfs:domain k8s:HorizontalPodAutoscaler ;
+    rdfs:range k8s:WorkloadResource ;
+    rdfs:label "scale target ref"@en ;
+    rdfs:comment "Reference to workload resource to scale"@en .
+
+k8s:minReplicas a owl:DatatypeProperty ;
+    rdfs:domain k8s:HorizontalPodAutoscaler ;
+    rdfs:range xsd:integer ;
+    rdfs:label "min replicas"@en ;
+    rdfs:comment "Minimum number of replicas"@en .
+
+k8s:maxReplicas a owl:DatatypeProperty ;
+    rdfs:domain k8s:HorizontalPodAutoscaler ;
+    rdfs:range xsd:integer ;
+    rdfs:label "max replicas"@en ;
+    rdfs:comment "Maximum number of replicas"@en .
+
+k8s:targetCPUUtilizationPercentage a owl:DatatypeProperty ;
+    rdfs:domain k8s:HorizontalPodAutoscaler ;
+    rdfs:range xsd:integer ;
+    rdfs:label "target CPU utilization percentage"@en ;
+    rdfs:comment "Target average CPU utilization across Pods"@en .
+
+# ============================================================================
+# Policy Resources
+# ============================================================================
+
+# ResourceQuota
+k8s:ResourceQuota a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "ResourceQuota"@en ;
+    rdfs:comment "Limits aggregate resource consumption per namespace"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/policy/resource-quotas/> .
+
+# ResourceQuota Properties
+k8s:hardLimits a owl:ObjectProperty ;
+    rdfs:domain k8s:ResourceQuota ;
+    rdfs:range k8s:ResourceList ;
+    rdfs:label "hard limits"@en ;
+    rdfs:comment "Hard resource usage limits for namespace"@en .
+
+# NetworkPolicy
+k8s:NetworkPolicy a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "NetworkPolicy"@en ;
+    rdfs:comment "Controls traffic flow at IP/port level between Pods/Services"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/network-policies/> .
+
+# NetworkPolicy Properties
+k8s:podSelector a owl:ObjectProperty ;
+    rdfs:domain k8s:NetworkPolicy ;
+    rdfs:range k8s:Selector ;
+    rdfs:label "pod selector"@en ;
+    rdfs:comment "Selects Pods to which policy applies"@en .
+
+k8s:policyTypes a owl:DatatypeProperty ;
+    rdfs:domain k8s:NetworkPolicy ;
+    rdfs:range xsd:string ;
+    rdfs:label "policy types"@en ;
+    rdfs:comment "Types of network policy: Ingress, Egress, or both"@en .
+
+# ============================================================================
+# Additional Relationships
+# ============================================================================
+
+# Job relationships
+k8s:Job k8s:creates k8s:Pod .
+k8s:CronJob k8s:creates k8s:Job .
+
+# DaemonSet relationships
+k8s:DaemonSet k8s:creates k8s:Pod .
+k8s:DaemonSet k8s:manages k8s:Pod .
+
+# HPA relationships
+k8s:HorizontalPodAutoscaler k8s:scales k8s:Deployment .
+k8s:HorizontalPodAutoscaler k8s:scales k8s:StatefulSet .
+k8s:HorizontalPodAutoscaler k8s:scales k8s:ReplicaSet .
+
+# ResourceQuota relationships
+k8s:ResourceQuota k8s:appliesTo k8s:Namespace .
+
+# NetworkPolicy relationships
+k8s:NetworkPolicy k8s:appliesTo k8s:Pod .
+
+# ============================================================================
+# Additional Constraints
+# ============================================================================
+
+# Job Constraints
+k8s:JobRestartPolicyConstraint a owl:Class ;
+    rdfs:label "Job Restart Policy Constraint"@en ;
+    rdfs:comment "Jobs only support Never or OnFailure restart policies"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/job/> .
+
+# CronJob Constraints
+k8s:CronJobScheduleRequiredConstraint a owl:Class ;
+    rdfs:label "CronJob Schedule Required Constraint"@en ;
+    rdfs:comment "The .spec.schedule field is required for CronJobs"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/> .
+
+# DaemonSet Constraints
+k8s:DaemonSetNoHPAConstraint a owl:Class ;
+    rdfs:label "DaemonSet No HPA Constraint"@en ;
+    rdfs:comment "HorizontalPodAutoscaler does not apply to DaemonSets"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/> .
+
+# ResourceQuota Constraints
+k8s:ResourceQuotaNamespaceConstraint a owl:Class ;
+    rdfs:label "ResourceQuota Namespace Constraint"@en ;
+    rdfs:comment "ResourceQuotas apply per namespace"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/policy/resource-quotas/> .
+
+# ============================================================================
+# Additional Best Practices
+# ============================================================================
+
+k8s:UseCronJobForScheduledTasks a k8s:BestPractice ;
+    rdfs:label "Use CronJob for Scheduled Tasks"@en ;
+    rdfs:comment "Use CronJobs for regular scheduled actions like backups, report generation"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/> .
+
+k8s:UseDaemonSetForNodeServices a k8s:BestPractice ;
+    rdfs:label "Use DaemonSet for Node Services"@en ;
+    rdfs:comment "Use DaemonSets for node-level services like log collectors, monitoring agents"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/> .
+
+k8s:SetResourceQuotasForProtection a k8s:BestPractice ;
+    rdfs:label "Set ResourceQuotas for Protection"@en ;
+    rdfs:comment "Use ResourceQuotas to prevent runaway resource consumption, especially for Jobs"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/policy/resource-quotas/> .
+
+# ============================================================================
+# Health Checks and Probes
+# ============================================================================
+
+# Probe Base Class
+k8s:Probe a owl:Class ;
+    rdfs:label "Probe"@en ;
+    rdfs:comment "Health check mechanism for containers"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/> .
+
+# Liveness Probe
+k8s:LivenessProbe a owl:Class ;
+    rdfs:subClassOf k8s:Probe ;
+    rdfs:label "Liveness Probe"@en ;
+    rdfs:comment "Determines when to restart a container, detects deadlocks and unresponsive applications"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/> .
+
+# Readiness Probe
+k8s:ReadinessProbe a owl:Class ;
+    rdfs:subClassOf k8s:Probe ;
+    rdfs:label "Readiness Probe"@en ;
+    rdfs:comment "Determines when container is ready to accept traffic"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/> .
+
+# Startup Probe
+k8s:StartupProbe a owl:Class ;
+    rdfs:subClassOf k8s:Probe ;
+    rdfs:label "Startup Probe"@en ;
+    rdfs:comment "Verifies application startup, disables other probes until successful"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/> .
+
+# Probe Properties
+k8s:hasLivenessProbe a owl:ObjectProperty ;
+    rdfs:domain k8s:Container ;
+    rdfs:range k8s:LivenessProbe ;
+    rdfs:label "has liveness probe"@en .
+
+k8s:hasReadinessProbe a owl:ObjectProperty ;
+    rdfs:domain k8s:Container ;
+    rdfs:range k8s:ReadinessProbe ;
+    rdfs:label "has readiness probe"@en .
+
+k8s:hasStartupProbe a owl:ObjectProperty ;
+    rdfs:domain k8s:Container ;
+    rdfs:range k8s:StartupProbe ;
+    rdfs:label "has startup probe"@en .
+
+# Probe Configuration Properties
+k8s:initialDelaySeconds a owl:DatatypeProperty ;
+    rdfs:domain k8s:Probe ;
+    rdfs:range xsd:integer ;
+    rdfs:label "initial delay seconds"@en ;
+    rdfs:comment "Seconds to wait before first probe (default: 0)"@en .
+
+k8s:periodSeconds a owl:DatatypeProperty ;
+    rdfs:domain k8s:Probe ;
+    rdfs:range xsd:integer ;
+    rdfs:label "period seconds"@en ;
+    rdfs:comment "How often to perform probe (default: 10)"@en .
+
+k8s:timeoutSeconds a owl:DatatypeProperty ;
+    rdfs:domain k8s:Probe ;
+    rdfs:range xsd:integer ;
+    rdfs:label "timeout seconds"@en ;
+    rdfs:comment "Probe timeout (default: 1)"@en .
+
+k8s:successThreshold a owl:DatatypeProperty ;
+    rdfs:domain k8s:Probe ;
+    rdfs:range xsd:integer ;
+    rdfs:label "success threshold"@en ;
+    rdfs:comment "Minimum consecutive successes (default: 1)"@en .
+
+k8s:failureThreshold a owl:DatatypeProperty ;
+    rdfs:domain k8s:Probe ;
+    rdfs:range xsd:integer ;
+    rdfs:label "failure threshold"@en ;
+    rdfs:comment "Consecutive failures before action"@en .
+
+# Probe Types
+k8s:ProbeType a owl:Class ;
+    rdfs:label "Probe Type"@en ;
+    rdfs:comment "Method used to check container health"@en .
+
+k8s:HTTPGetProbe a k8s:ProbeType ;
+    rdfs:label "HTTP GET Probe"@en ;
+    rdfs:comment "HTTP GET request, success if status 200-399"@en .
+
+k8s:TCPSocketProbe a k8s:ProbeType ;
+    rdfs:label "TCP Socket Probe"@en ;
+    rdfs:comment "TCP check, success if port is open"@en .
+
+k8s:ExecProbe a k8s:ProbeType ;
+    rdfs:label "Exec Probe"@en ;
+    rdfs:comment "Execute command, success if exit code 0"@en .
+
+k8s:GRPCProbe a k8s:ProbeType ;
+    rdfs:label "gRPC Probe"@en ;
+    rdfs:comment "gRPC health check, success if status SERVING"@en .
+
+k8s:probeType a owl:ObjectProperty ;
+    rdfs:domain k8s:Probe ;
+    rdfs:range k8s:ProbeType ;
+    rdfs:label "probe type"@en .
+
+# ============================================================================
+# RBAC (Role-Based Access Control)
+# ============================================================================
+
+# Role
+k8s:Role a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "Role"@en ;
+    rdfs:comment "Namespace-specific set of permissions"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/reference/access-authn-authz/rbac/> .
+
+# ClusterRole
+k8s:ClusterRole a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "ClusterRole"@en ;
+    rdfs:comment "Cluster-wide set of permissions"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/reference/access-authn-authz/rbac/> .
+
+# RoleBinding
+k8s:RoleBinding a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "RoleBinding"@en ;
+    rdfs:comment "Grants Role permissions to subjects in namespace"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/reference/access-authn-authz/rbac/> .
+
+# ClusterRoleBinding
+k8s:ClusterRoleBinding a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "ClusterRoleBinding"@en ;
+    rdfs:comment "Grants ClusterRole permissions cluster-wide"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/reference/access-authn-authz/rbac/> .
+
+# ServiceAccount
+k8s:ServiceAccount a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "ServiceAccount"@en ;
+    rdfs:comment "Identity for processes running in Pods"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/reference/access-authn-authz/rbac/> .
+
+# RBAC Properties
+k8s:grantsPermissions a owl:ObjectProperty ;
+    rdfs:domain k8s:Role ;
+    rdfs:label "grants permissions"@en ;
+    rdfs:comment "Permissions granted by this role"@en .
+
+k8s:bindsRole a owl:ObjectProperty ;
+    rdfs:domain k8s:RoleBinding ;
+    rdfs:range k8s:Role ;
+    rdfs:label "binds role"@en .
+
+k8s:bindsClusterRole a owl:ObjectProperty ;
+    rdfs:domain k8s:ClusterRoleBinding ;
+    rdfs:range k8s:ClusterRole ;
+    rdfs:label "binds cluster role"@en .
+
+k8s:bindsToSubject a owl:ObjectProperty ;
+    rdfs:label "binds to subject"@en ;
+    rdfs:comment "Binds role to user, group, or service account"@en .
+
+k8s:usesServiceAccount a owl:ObjectProperty ;
+    rdfs:domain k8s:Pod ;
+    rdfs:range k8s:ServiceAccount ;
+    rdfs:label "uses service account"@en .
+
+# RBAC Verbs
+k8s:RBACVerb a owl:Class ;
+    rdfs:label "RBAC Verb"@en ;
+    rdfs:comment "Action that can be performed on resources"@en .
+
+k8s:get a k8s:RBACVerb ;
+    rdfs:label "get"@en .
+
+k8s:list a k8s:RBACVerb ;
+    rdfs:label "list"@en .
+
+k8s:watch a k8s:RBACVerb ;
+    rdfs:label "watch"@en .
+
+k8s:create a k8s:RBACVerb ;
+    rdfs:label "create"@en .
+
+k8s:update a k8s:RBACVerb ;
+    rdfs:label "update"@en .
+
+k8s:patch a k8s:RBACVerb ;
+    rdfs:label "patch"@en .
+
+k8s:delete a k8s:RBACVerb ;
+    rdfs:label "delete"@en .
+
+# ============================================================================
+# Resource Management
+# ============================================================================
+
+k8s:ResourceRequirements a owl:Class ;
+    rdfs:label "Resource Requirements"@en ;
+    rdfs:comment "CPU and memory requirements for containers"@en .
+
+k8s:cpuRequest a owl:DatatypeProperty ;
+    rdfs:domain k8s:ResourceRequirements ;
+    rdfs:range xsd:string ;
+    rdfs:label "CPU request"@en ;
+    rdfs:comment "Minimum CPU needed (e.g., '100m', '0.5')"@en .
+
+k8s:memoryRequest a owl:DatatypeProperty ;
+    rdfs:domain k8s:ResourceRequirements ;
+    rdfs:range xsd:string ;
+    rdfs:label "memory request"@en ;
+    rdfs:comment "Minimum memory needed (e.g., '128Mi', '1Gi')"@en .
+
+k8s:cpuLimit a owl:DatatypeProperty ;
+    rdfs:domain k8s:ResourceRequirements ;
+    rdfs:range xsd:string ;
+    rdfs:label "CPU limit"@en ;
+    rdfs:comment "Maximum CPU allowed"@en .
+
+k8s:memoryLimit a owl:DatatypeProperty ;
+    rdfs:domain k8s:ResourceRequirements ;
+    rdfs:range xsd:string ;
+    rdfs:label "memory limit"@en ;
+    rdfs:comment "Maximum memory allowed"@en .
+
+# LimitRange
+k8s:LimitRange a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "LimitRange"@en ;
+    rdfs:comment "Enforces resource constraints in namespace"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/policy/limit-range/> .
+
+# ============================================================================
+# Volume Types
+# ============================================================================
+
+k8s:Volume a owl:Class ;
+    rdfs:label "Volume"@en ;
+    rdfs:comment "Storage accessible to containers in Pod"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/storage/volumes/> .
+
+k8s:VolumeType a owl:Class ;
+    rdfs:label "Volume Type"@en ;
+    rdfs:comment "Type of volume storage"@en .
+
+k8s:EmptyDir a k8s:VolumeType ;
+    rdfs:label "EmptyDir"@en ;
+    rdfs:comment "Temporary directory that shares Pod's lifetime"@en .
+
+k8s:HostPath a k8s:VolumeType ;
+    rdfs:label "HostPath"@en ;
+    rdfs:comment "Mounts file or directory from host node"@en .
+
+k8s:ConfigMapVolume a k8s:VolumeType ;
+    rdfs:label "ConfigMap Volume"@en ;
+    rdfs:comment "Populates volume with ConfigMap data"@en .
+
+k8s:SecretVolume a k8s:VolumeType ;
+    rdfs:label "Secret Volume"@en ;
+    rdfs:comment "Populates volume with Secret data"@en .
+
+k8s:PersistentVolumeClaimVolume a k8s:VolumeType ;
+    rdfs:label "PVC Volume"@en ;
+    rdfs:comment "Uses PersistentVolumeClaim"@en .
+
+k8s:volumeType a owl:ObjectProperty ;
+    rdfs:domain k8s:Volume ;
+    rdfs:range k8s:VolumeType ;
+    rdfs:label "volume type"@en .
+
+# ============================================================================
+# Additional Constraints and Rules
+# ============================================================================
+
+# Probe Constraints
+k8s:ProbeSuccessThresholdConstraint a owl:Class ;
+    rdfs:label "Probe Success Threshold Constraint"@en ;
+    rdfs:comment "Success threshold must be 1 for liveness and startup probes"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/> .
+
+# RBAC Constraints
+k8s:RBACAdditiveConstraint a owl:Class ;
+    rdfs:label "RBAC Additive Constraint"@en ;
+    rdfs:comment "RBAC permissions are purely additive, no deny rules"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/reference/access-authn-authz/rbac/> .
+
+k8s:ServiceAccountNamespaceConstraint a owl:Class ;
+    rdfs:label "ServiceAccount Namespace Constraint"@en ;
+    rdfs:comment "ServiceAccounts are namespace-scoped"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/reference/access-authn-authz/rbac/> .
+
+# ============================================================================
+# Additional Best Practices
+# ============================================================================
+
+k8s:UseProbesForReliability a k8s:BestPractice ;
+    rdfs:label "Use Probes for Reliability"@en ;
+    rdfs:comment "Use liveness and readiness probes together for reliable applications"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/> .
+
+k8s:KeepProbesLightweight a k8s:BestPractice ;
+    rdfs:label "Keep Probes Lightweight"@en ;
+    rdfs:comment "Probes should be lightweight to avoid performance impact"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/> .
+
+k8s:LeastPrivilegeRBAC a k8s:BestPractice ;
+    rdfs:label "Least Privilege RBAC"@en ;
+    rdfs:comment "Follow least privilege principle when defining RBAC rules"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/reference/access-authn-authz/rbac/> .
+
+k8s:SetResourceLimits a k8s:BestPractice ;
+    rdfs:label "Set Resource Limits"@en ;
+    rdfs:comment "Always set resource requests and limits for containers"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/> .
+
+# ============================================================================
+# Ingress and Advanced Networking
+# ============================================================================
+
+# Ingress
+k8s:Ingress a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "Ingress"@en ;
+    rdfs:comment "Exposes HTTP and HTTPS routes from outside cluster to services"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/ingress/> .
+
+# IngressClass
+k8s:IngressClass a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "IngressClass"@en ;
+    rdfs:comment "References which Ingress controller should implement the Ingress"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/ingress/> .
+
+# Ingress Properties
+k8s:ingressClassName a owl:DatatypeProperty ;
+    rdfs:domain k8s:Ingress ;
+    rdfs:range xsd:string ;
+    rdfs:label "ingress class name"@en ;
+    rdfs:comment "Specifies which IngressClass to use"@en .
+
+k8s:ingressRules a owl:ObjectProperty ;
+    rdfs:domain k8s:Ingress ;
+    rdfs:range k8s:IngressRule ;
+    rdfs:label "ingress rules"@en ;
+    rdfs:comment "Routing rules for the Ingress"@en .
+
+k8s:tlsConfiguration a owl:ObjectProperty ;
+    rdfs:domain k8s:Ingress ;
+    rdfs:range k8s:IngressTLS ;
+    rdfs:label "TLS configuration"@en ;
+    rdfs:comment "TLS/SSL termination configuration"@en .
+
+# Path Types
+k8s:PathType a owl:Class ;
+    rdfs:label "Path Type"@en ;
+    rdfs:comment "How Ingress paths should be matched"@en .
+
+k8s:Exact a k8s:PathType ;
+    rdfs:label "Exact"@en ;
+    rdfs:comment "Matches URL path exactly"@en .
+
+k8s:Prefix a k8s:PathType ;
+    rdfs:label "Prefix"@en ;
+    rdfs:comment "Matches based on URL path prefix"@en .
+
+k8s:ImplementationSpecific a k8s:PathType ;
+    rdfs:label "ImplementationSpecific"@en ;
+    rdfs:comment "Matching depends on IngressClass"@en .
+
+# Endpoints
+k8s:Endpoints a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "Endpoints"@en ;
+    rdfs:comment "Collection of network endpoints for a Service"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/service/> .
+
+k8s:EndpointSlice a owl:Class ;
+    rdfs:subClassOf k8s:APIObject ;
+    rdfs:label "EndpointSlice"@en ;
+    rdfs:comment "Scalable and extensible way to represent network endpoints"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/service/> .
+
+# ============================================================================
+# DNS and Service Discovery
+# ============================================================================
+
+k8s:DNSPolicy a owl:Class ;
+    rdfs:label "DNS Policy"@en ;
+    rdfs:comment "DNS resolution policy for Pods"@en .
+
+k8s:ClusterFirst a k8s:DNSPolicy ;
+    rdfs:label "ClusterFirst"@en ;
+    rdfs:comment "Use cluster DNS first, then host DNS"@en .
+
+k8s:ClusterFirstWithHostNet a k8s:DNSPolicy ;
+    rdfs:label "ClusterFirstWithHostNet"@en ;
+    rdfs:comment "For Pods with hostNetwork"@en .
+
+k8s:Default a k8s:DNSPolicy ;
+    rdfs:label "Default"@en ;
+    rdfs:comment "Inherit DNS from node"@en .
+
+k8s:None a k8s:DNSPolicy ;
+    rdfs:label "None"@en ;
+    rdfs:comment "Ignore cluster DNS settings"@en .
+
+k8s:dnsPolicy a owl:ObjectProperty ;
+    rdfs:domain k8s:Pod ;
+    rdfs:range k8s:DNSPolicy ;
+    rdfs:label "DNS policy"@en .
+
+# Service DNS
+k8s:serviceDNSName a owl:DatatypeProperty ;
+    rdfs:domain k8s:Service ;
+    rdfs:range xsd:string ;
+    rdfs:label "service DNS name"@en ;
+    rdfs:comment "Format: <service-name>.<namespace>.svc.cluster.local"@en .
+
+# ============================================================================
+# Pod Scheduling and Affinity
+# ============================================================================
+
+# Node Affinity
+k8s:NodeAffinity a owl:Class ;
+    rdfs:label "Node Affinity"@en ;
+    rdfs:comment "Rules for Pod placement based on node labels"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/> .
+
+k8s:requiredDuringSchedulingIgnoredDuringExecution a owl:ObjectProperty ;
+    rdfs:domain k8s:NodeAffinity ;
+    rdfs:label "required during scheduling"@en ;
+    rdfs:comment "Hard requirement for node selection"@en .
+
+k8s:preferredDuringSchedulingIgnoredDuringExecution a owl:ObjectProperty ;
+    rdfs:domain k8s:NodeAffinity ;
+    rdfs:label "preferred during scheduling"@en ;
+    rdfs:comment "Soft preference for node selection"@en .
+
+# Pod Affinity/Anti-affinity
+k8s:PodAffinity a owl:Class ;
+    rdfs:label "Pod Affinity"@en ;
+    rdfs:comment "Rules for Pod co-location"@en .
+
+k8s:PodAntiAffinity a owl:Class ;
+    rdfs:label "Pod Anti-Affinity"@en ;
+    rdfs:comment "Rules to prevent Pod co-location"@en .
+
+# Taints and Tolerations
+k8s:Taint a owl:Class ;
+    rdfs:label "Taint"@en ;
+    rdfs:comment "Node property that repels Pods"@en .
+
+k8s:Toleration a owl:Class ;
+    rdfs:label "Toleration"@en ;
+    rdfs:comment "Allows Pod to schedule on tainted nodes"@en .
+
+k8s:taintEffect a owl:DatatypeProperty ;
+    rdfs:domain k8s:Taint ;
+    rdfs:range xsd:string ;
+    rdfs:label "taint effect"@en ;
+    rdfs:comment "NoSchedule, PreferNoSchedule, or NoExecute"@en .
+
+# ============================================================================
+# Security Context
+# ============================================================================
+
+k8s:SecurityContext a owl:Class ;
+    rdfs:label "Security Context"@en ;
+    rdfs:comment "Security settings for Pod or Container"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/configure-pod-container/security-context/> .
+
+k8s:runAsUser a owl:DatatypeProperty ;
+    rdfs:domain k8s:SecurityContext ;
+    rdfs:range xsd:integer ;
+    rdfs:label "run as user"@en ;
+    rdfs:comment "UID to run container process"@en .
+
+k8s:runAsGroup a owl:DatatypeProperty ;
+    rdfs:domain k8s:SecurityContext ;
+    rdfs:range xsd:integer ;
+    rdfs:label "run as group"@en ;
+    rdfs:comment "GID to run container process"@en .
+
+k8s:runAsNonRoot a owl:DatatypeProperty ;
+    rdfs:domain k8s:SecurityContext ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "run as non-root"@en ;
+    rdfs:comment "Container must run as non-root user"@en .
+
+k8s:readOnlyRootFilesystem a owl:DatatypeProperty ;
+    rdfs:domain k8s:SecurityContext ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "read-only root filesystem"@en ;
+    rdfs:comment "Container root filesystem is read-only"@en .
+
+# Pod Security Standards
+k8s:PodSecurityStandard a owl:Class ;
+    rdfs:label "Pod Security Standard"@en ;
+    rdfs:comment "Security profile for Pods"@en .
+
+k8s:Privileged a k8s:PodSecurityStandard ;
+    rdfs:label "Privileged"@en ;
+    rdfs:comment "Unrestricted policy"@en .
+
+k8s:Baseline a k8s:PodSecurityStandard ;
+    rdfs:label "Baseline"@en ;
+    rdfs:comment "Minimally restrictive policy"@en .
+
+k8s:Restricted a k8s:PodSecurityStandard ;
+    rdfs:label "Restricted"@en ;
+    rdfs:comment "Heavily restricted policy"@en .
+
+# ============================================================================
+# Environment Variables and Configuration
+# ============================================================================
+
+k8s:EnvVar a owl:Class ;
+    rdfs:label "Environment Variable"@en ;
+    rdfs:comment "Environment variable for container"@en .
+
+k8s:envVarName a owl:DatatypeProperty ;
+    rdfs:domain k8s:EnvVar ;
+    rdfs:range xsd:string ;
+    rdfs:label "env var name"@en .
+
+k8s:envVarValue a owl:DatatypeProperty ;
+    rdfs:domain k8s:EnvVar ;
+    rdfs:range xsd:string ;
+    rdfs:label "env var value"@en .
+
+k8s:envVarValueFrom a owl:ObjectProperty ;
+    rdfs:domain k8s:EnvVar ;
+    rdfs:label "env var value from"@en ;
+    rdfs:comment "Source for environment variable value"@en .
+
+# ConfigMap and Secret references
+k8s:configMapKeyRef a owl:ObjectProperty ;
+    rdfs:label "ConfigMap key ref"@en ;
+    rdfs:comment "Reference to ConfigMap key"@en .
+
+k8s:secretKeyRef a owl:ObjectProperty ;
+    rdfs:label "Secret key ref"@en ;
+    rdfs:comment "Reference to Secret key"@en .
+
+# ============================================================================
+# Additional Relationships
+# ============================================================================
+
+# Ingress relationships
+k8s:Ingress k8s:routes k8s:Service .
+k8s:IngressClass k8s:implements k8s:Ingress .
+
+# DNS relationships
+k8s:Service k8s:hasDNSName k8s:serviceDNSName .
+
+# Scheduling relationships
+k8s:Pod k8s:hasNodeAffinity k8s:NodeAffinity .
+k8s:Pod k8s:hasPodAffinity k8s:PodAffinity .
+k8s:Pod k8s:hasPodAntiAffinity k8s:PodAntiAffinity .
+k8s:Pod k8s:tolerates k8s:Taint .
+
+# Security relationships
+k8s:Pod k8s:hasSecurityContext k8s:SecurityContext .
+k8s:Container k8s:hasSecurityContext k8s:SecurityContext .
+
+# ============================================================================
+# Additional Constraints
+# ============================================================================
+
+# Ingress Constraints
+k8s:IngressPathTypeRequired a owl:Class ;
+    rdfs:label "Ingress Path Type Required"@en ;
+    rdfs:comment "Each Ingress path must have a pathType"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/ingress/> .
+
+k8s:IngressClassDefaultLimit a owl:Class ;
+    rdfs:label "Ingress Class Default Limit"@en ;
+    rdfs:comment "Only one IngressClass can be marked as default"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/ingress/> .
+
+# DNS Constraints
+k8s:DNSNameFormat a owl:Class ;
+    rdfs:label "DNS Name Format"@en ;
+    rdfs:comment "Service DNS: <service>.<namespace>.svc.cluster.local"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/> .
+
+# Security Constraints
+k8s:SecurityContextPrecedence a owl:Class ;
+    rdfs:label "Security Context Precedence"@en ;
+    rdfs:comment "Container security context overrides Pod security context"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/configure-pod-container/security-context/> .
+
+# ============================================================================
+# Additional Best Practices
+# ============================================================================
+
+k8s:UseIngressForHTTP a k8s:BestPractice ;
+    rdfs:label "Use Ingress for HTTP"@en ;
+    rdfs:comment "Use Ingress for HTTP/HTTPS traffic instead of NodePort/LoadBalancer"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/services-networking/ingress/> .
+
+k8s:ImplementPodAntiAffinity a k8s:BestPractice ;
+    rdfs:label "Implement Pod Anti-Affinity"@en ;
+    rdfs:comment "Use anti-affinity to spread replicas across nodes for HA"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/> .
+
+k8s:UseSecurityContext a k8s:BestPractice ;
+    rdfs:label "Use Security Context"@en ;
+    rdfs:comment "Always define security contexts for defense in depth"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/tasks/configure-pod-container/security-context/> .
+
+k8s:AvoidHostNetwork a k8s:BestPractice ;
+    rdfs:label "Avoid Host Network"@en ;
+    rdfs:comment "Avoid hostNetwork unless absolutely necessary"@en ;
+    prov:wasDerivedFrom <https://kubernetes.io/docs/concepts/policy/pod-security-standards/> .

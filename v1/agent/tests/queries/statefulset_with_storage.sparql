@@ -1,0 +1,56 @@
+# Query: Create a StatefulSet for a database with persistent storage
+# This query retrieves information for generating a StatefulSet with PVC
+
+PREFIX k8s: <http://kubernetes.io/ontology#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?resource ?property ?value ?comment ?constraint
+WHERE {
+  # Find StatefulSet resource and properties
+  {
+    k8s:StatefulSet a owl:Class ;
+                    rdfs:comment ?statefulSetComment .
+    
+    ?property rdfs:domain k8s:StatefulSet ;
+              rdfs:label ?propertyLabel ;
+              rdfs:comment ?propertyComment .
+  }
+  
+  # Get PersistentVolumeClaim requirements
+  UNION
+  {
+    k8s:PersistentVolumeClaim a owl:Class ;
+                              rdfs:comment ?pvcComment .
+    
+    ?pvcProperty rdfs:domain k8s:PersistentVolumeClaim ;
+                 rdfs:label ?pvcPropertyLabel .
+  }
+  
+  # Get storage access modes
+  UNION
+  {
+    ?accessMode a k8s:AccessMode ;
+                rdfs:label ?accessModeLabel ;
+                rdfs:comment ?accessModeComment .
+  }
+  
+  # Get storage constraints
+  UNION
+  {
+    ?constraint a owl:Class ;
+                rdfs:label ?constraintLabel ;
+                rdfs:comment ?constraintComment .
+    FILTER(CONTAINS(LCASE(STR(?constraintComment)), "storage") || 
+           CONTAINS(LCASE(STR(?constraintComment)), "volume"))
+  }
+  
+  # Get StatefulSet specific features
+  UNION
+  {
+    SELECT ?feature ?featureValue
+    WHERE {
+      ?feature rdfs:domain k8s:StatefulSet ;
+               owl:hasValue ?featureValue .
+    }
+  }
+}
