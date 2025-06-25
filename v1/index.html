@@ -141,6 +141,28 @@
             gap: var(--spacing-md);
             z-index: 20;
             box-shadow: var(--shadow-sm);
+            justify-content: space-between;
+        }
+        
+        #label-mode-indicator {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            color: var(--ui-text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            background: var(--ui-bg-light);
+            padding: 6px 16px;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--ui-border);
+            white-space: nowrap;
+        }
+        
+        #label-mode-indicator span {
+            color: var(--ui-accent);
+            font-size: 11px;
+            margin-left: 8px;
+            opacity: 0.8;
         }
 
         #left-panel {
@@ -632,10 +654,16 @@
         </div>
     </div>
     <div id="top-bar">
-        <button id="add-worker-btn" data-label="Add Worker">Add Worker</button>
-        <button id="remove-worker-btn" data-label="Remove Worker">Remove Worker</button>
-        <button id="pause-btn">Pause</button>
-        <div style="margin-left:auto; display:flex; gap: 10px; align-items: center;">
+        <div>
+            <button id="add-worker-btn" data-label="Add Worker">Add Worker</button>
+            <button id="remove-worker-btn" data-label="Remove Worker">Remove Worker</button>
+            <button id="pause-btn">Pause</button>
+        </div>
+        <div id="label-mode-indicator">
+            <span id="label-mode-text">Kubernetes Terminology Mode</span>
+            <span>Press TAB to switch</span>
+        </div>
+        <div style="display:flex; gap: 10px; align-items: center;">
             <span style="color: #B0BEC5; font-size: 12px;">Tool:</span>
             <button id="select-tool" class="tool-btn" title="Select Tool (S) - Drag pods between nodes">👆 Select</button>
             <button id="navigate-tool" class="tool-btn active" title="Navigate Tool (V) - Click to inspect, drag to rotate">🖐️ Navigate</button>
@@ -1562,6 +1590,7 @@
                     proxyLabel.element.style.padding = '4px 8px';
                     proxyLabel.element.style.fontWeight = 'bold';
                     kubeProxy.add(proxyLabel);
+                    kubeProxy.label = proxyLabel; // Store reference for label updates
                     
                     group.add(kubeProxy);
                     node.kubeProxy = kubeProxy; // Store reference for animations
@@ -1894,15 +1923,14 @@
                                     iptablesPos
                                 ]);
                                 
-                                const cablePoints = cable.getPoints(30);
-                                const lineGeom = new THREE.BufferGeometry().setFromPoints(cablePoints);
-                                const lineMat = new THREE.LineBasicMaterial({
+                                // Create tube geometry for proper 3D cable (half thickness)
+                                const tubeGeom = new THREE.TubeGeometry(cable, 30, 0.05, 8, false);
+                                const tubeMat = new THREE.MeshLambertMaterial({
                                     color: 0x4285F4,
                                     transparent: true,
-                                    opacity: 0.4,
-                                    linewidth: 3
+                                    opacity: 0.6
                                 });
-                                const line = new THREE.Line(lineGeom, lineMat);
+                                const line = new THREE.Mesh(tubeGeom, tubeMat);
                                 line.userData.cable = cable; // Store the cable curve for particle animation
                                 line.userData.nodeId = node.id; // Store node reference
                                 scene.add(line);
@@ -1921,10 +1949,15 @@
 
                     const podMeshes = matchingPods.map(pod => threeObjects.get(pod.id)).filter(Boolean);
 
-                    // Update network lines
-                    if (!srv.networkLines) srv.networkLines = [];
-                    srv.networkLines.forEach(line => scene.remove(line));
-                    srv.networkLines = [];
+                    // Only update network lines if they don't exist yet
+                    if (!srv.networkLines) {
+                        srv.networkLines = [];
+                    }
+                    
+                    // Skip if lines already exist for this service
+                    if (srv.networkLines.length > 0) {
+                        return;
+                    }
 
                     podMeshes.forEach(podMesh => {
                         const podPos = new THREE.Vector3();
@@ -1949,15 +1982,14 @@
                                     podPos
                                 ]);
                                 
-                                const cablePoints = iptablesToPodCable.getPoints(15);
-                                const lineGeom = new THREE.BufferGeometry().setFromPoints(cablePoints);
-                                const lineMat = new THREE.LineBasicMaterial({
+                                // Create tube geometry for proper 3D cable (half thickness)
+                                const tubeGeom = new THREE.TubeGeometry(iptablesToPodCable, 20, 0.025, 8, false);
+                                const tubeMat = new THREE.MeshLambertMaterial({
                                     color: 0xFF6B6B, // Match iptables color
                                     transparent: true,
-                                    opacity: 0.3,
-                                    linewidth: 1
+                                    opacity: 0.4
                                 });
-                                const line = new THREE.Line(lineGeom, lineMat);
+                                const line = new THREE.Mesh(tubeGeom, tubeMat);
                                 line.userData.cable = iptablesToPodCable;
                                 line.userData.type = 'iptables-to-pod';
                                 line.userData.podId = pod.id;
@@ -2676,7 +2708,18 @@
             function toggleLabelMode() {
                 useIntuitive = !useIntuitive;
                 updateAllLabels();
+                updateLabelModeIndicator();
                 logEvent(`Switched to ${useIntuitive ? 'intuitive' : 'Kubernetes'} terminology`, 'INFO');
+            }
+            
+            // Update label mode indicator
+            function updateLabelModeIndicator() {
+                const indicator = document.getElementById('label-mode-text');
+                if (indicator) {
+                    indicator.textContent = useIntuitive ? 
+                        'Common Software Engineering Terminology Mode' : 
+                        'Kubernetes Terminology Mode';
+                }
             }
             
             // Update all visible labels
@@ -2736,7 +2779,7 @@
                     }
                     
                     // Update kube-proxy labels on worker nodes
-                    if (node.type === 'worker' && node.kubeProxy && node.kubeProxy.label) {
+                    if (node.type === 'worker' && node.kubeProxy && node.kubeProxy.label && node.kubeProxy.label.element) {
                         node.kubeProxy.label.element.textContent = getLabel('kube-proxy');
                     }
                 });
