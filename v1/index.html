@@ -96,6 +96,11 @@
             font-weight: 500;
             pointer-events: none;
             backdrop-filter: blur(4px);
+            transition: opacity 0.3s ease-in;
+        }
+        
+        .label.fading-out {
+            transition: opacity 2s ease-out;
         }
 
         .pod-label {
@@ -1559,6 +1564,10 @@
                     div.style.cursor = 'pointer';
                     div.onclick = clickHandler;
                 }
+                // Set initial opacity based on visibility mode
+                if (!allLabelsVisible) {
+                    div.style.opacity = '0';
+                }
                 const label = new THREE.CSS2DObject(div); 
                 label.position.copy(pos); 
                 label.visible = allLabelsVisible; // Respect the visibility setting
@@ -2251,13 +2260,30 @@
                         }
                     }
                     
-                    // Update visibility for all objects with labels
+                    // Update opacity for all objects with labels
                     scene.traverse((obj) => {
                         if (obj.children) {
                             obj.children.forEach(child => {
-                                if (child.isCSS2DObject && child.visible !== undefined) {
-                                    // Show label if object is hovered, hide otherwise
-                                    child.visible = hoveredObjects.has(obj);
+                                if (child.isCSS2DObject && child.element) {
+                                    const shouldShow = hoveredObjects.has(obj);
+                                    const element = child.element;
+                                    
+                                    if (shouldShow) {
+                                        // Fade in
+                                        element.classList.remove('fading-out');
+                                        element.style.opacity = '1';
+                                        child.visible = true;
+                                    } else if (element.style.opacity === '1') {
+                                        // Start fade out
+                                        element.classList.add('fading-out');
+                                        element.style.opacity = '0';
+                                        // Hide after fade completes
+                                        setTimeout(() => {
+                                            if (element.style.opacity === '0') {
+                                                child.visible = false;
+                                            }
+                                        }, 2000);
+                                    }
                                 }
                             });
                         }
@@ -2945,13 +2971,23 @@
             // Update visibility of all labels
             function updateAllLabelsVisibility() {
                 scene.traverse((object) => {
-                    if (object.isCSS2DObject) {
-                        object.visible = allLabelsVisible;
+                    if (object.isCSS2DObject && object.element) {
+                        if (allLabelsVisible) {
+                            // Show all labels
+                            object.visible = true;
+                            object.element.style.opacity = '1';
+                            object.element.classList.remove('fading-out');
+                        } else {
+                            // Hide all labels initially
+                            object.visible = false;
+                            object.element.style.opacity = '0';
+                            object.element.classList.remove('fading-out');
+                        }
                     }
                 });
                 
-                // Clear hover state when toggling on
-                if (allLabelsVisible && hoveredObject) {
+                // Clear hover state when toggling
+                if (hoveredObject) {
                     hoveredObject = null;
                 }
             }
