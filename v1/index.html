@@ -1317,19 +1317,64 @@
                 const podPos = new THREE.Vector3();
                 targetPodMesh.getWorldPosition(podPos);
                 
-                // Create path through iptables if available
+                // Create combined path based on service type
                 let combinedPath;
-                if (iptablesToPodLine && iptablesToPodLine.userData.cable) {
-                    // Follow the iptables cable path
+                let returnPath;
+                
+                if (srv.type === 'LoadBalancer') {
+                    // For LoadBalancer: combine LB → iptables → pod paths
+                    const externalLb = threeObjects.get('external-lb');
+                    const lbToIptablesLine = externalLb?.connections?.find(line => 
+                        line.userData.nodeId === targetNode.id
+                    );
+                    
+                    if (lbToIptablesLine && lbToIptablesLine.userData.cable && 
+                        iptablesToPodLine && iptablesToPodLine.userData.cable) {
+                        
+                        // Get points from both cables
+                        const lbToIptablesPoints = [];
+                        const iptablesToPodPoints = [];
+                        
+                        // Sample points from LB to iptables cable
+                        for (let i = 0; i <= 20; i++) {
+                            const point = new THREE.Vector3();
+                            lbToIptablesLine.userData.cable.getPointAt(i / 20, point);
+                            lbToIptablesPoints.push(point);
+                        }
+                        
+                        // Sample points from iptables to pod cable
+                        for (let i = 1; i <= 20; i++) { // Start from 1 to avoid duplicate iptables point
+                            const point = new THREE.Vector3();
+                            iptablesToPodLine.userData.cable.getPointAt(i / 20, point);
+                            iptablesToPodPoints.push(point);
+                        }
+                        
+                        // Combine the paths
+                        combinedPath = new THREE.CatmullRomCurve3([...lbToIptablesPoints, ...iptablesToPodPoints]);
+                        returnPath = combinedPath; // Same path for return
+                        
+                    } else {
+                        // Fallback if cables not found
+                        combinedPath = createFallbackPath(sourcePos, podPos);
+                        returnPath = combinedPath;
+                    }
+                } else if (iptablesToPodLine && iptablesToPodLine.userData.cable) {
+                    // For other service types, follow the iptables cable path
                     combinedPath = iptablesToPodLine.userData.cable;
+                    returnPath = combinedPath;
                 } else {
                     // Fallback to direct path
+                    combinedPath = createFallbackPath(sourcePos, podPos);
+                    returnPath = combinedPath;
+                }
+                
+                function createFallbackPath(start, end) {
                     const midPoint = new THREE.Vector3(
-                        (sourcePos.x + podPos.x) / 2,
-                        Math.max(sourcePos.y, podPos.y) + 1,
-                        (sourcePos.z + podPos.z) / 2
+                        (start.x + end.x) / 2,
+                        Math.max(start.y, end.y) + 1,
+                        (start.z + end.z) / 2
                     );
-                    combinedPath = new THREE.CatmullRomCurve3([sourcePos, midPoint, podPos]);
+                    return new THREE.CatmullRomCurve3([start, midPoint, end]);
                 }
                 
                 // Create a small white pearl particle (20% of previous size)
@@ -1401,19 +1446,34 @@
                         const respAura = new THREE.Mesh(respAuraGeom, respAuraMat);
                         responseParticle.add(respAura);
                         
-                        // Animate response back along same cable
+                        // Animate response back along same path
                         new TWEEN.Tween({ t: 0 })
                             .to({ t: 1 }, 2500)
                             .easing(TWEEN.Easing.Quadratic.InOut)
                             .onUpdate(({ t }) => {
                                 // Reverse path for response
-                                combinedPath.getPointAt(1 - t, responseParticle.position);
+                                returnPath.getPointAt(1 - t, responseParticle.position);
                                 const scale = 1 + Math.sin(t * Math.PI * 4) * 0.1;
                                 responseParticle.scale.setScalar(scale);
                                 respAura.scale.setScalar(1.3 * scale);
                             })
                             .onComplete(() => {
                                 scene.remove(responseParticle);
+                                
+                                // Animate load balancer on response arrival
+                                if (srv.type === 'LoadBalancer') {
+                                    const externalLb = threeObjects.get('external-lb');
+                                    const lbMesh = externalLb?.children[0];
+                                    if (lbMesh && lbMesh.material) {
+                                        const origIntensity = lbMesh.material.emissiveIntensity;
+                                        new TWEEN.Tween(lbMesh.material)
+                                            .to({ emissiveIntensity: 0.6 }, 200)
+                                            .chain(new TWEEN.Tween(lbMesh.material)
+                                                .to({ emissiveIntensity: origIntensity }, 200))
+                                            .start();
+                                    }
+                                }
+                                
                                 if (requestIndex === 0) {
                                     logEvent(`Traffic routed to pods: ${matchingPods.map(p => p.name).join(', ')}`, 'INFO');
                                 }
@@ -1980,12 +2040,12 @@
                                 const iptablesPos = new THREE.Vector3();
                                 node.iptables.getWorldPosition(iptablesPos);
                                 
-                                // Create droopy cable connection
+                                // Create droopy cable connection (tighter droop)
                                 const cable = new THREE.CatmullRomCurve3([
                                     lbPos,
                                     new THREE.Vector3(
                                         (lbPos.x + iptablesPos.x) / 2,
-                                        Math.min(lbPos.y, iptablesPos.y) - 2, // Droop down
+                                        Math.min(lbPos.y, iptablesPos.y) - 0.5, // Reduced droop from 2 to 0.5
                                         (lbPos.z + iptablesPos.z) / 2
                                     ),
                                     iptablesPos
